@@ -1,0 +1,17 @@
+# Game dump (copyrighted, ~1.8 GiB)
+*.iso
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Extracted binaries and regenerable dumps.
+# Keep the catalog, glossary, and indexes — those are the source/target of record.
+extracted/*
+!extracted/translation_catalog.csv
+!extracted/GLOSSARY.txt
+!extracted/RESOURCE_MAP.txt
+!extracted/mes_file_index.csv
+!extracted/message_ids.txt

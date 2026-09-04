@@ -1,0 +1,4 @@
+# Treat the catalog as text so diffs stay readable.
+extracted/translation_catalog.csv text eol=lf
+*.py text eol=lf
+*.txt text eol=lf

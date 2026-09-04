@@ -1,0 +1,95 @@
+半熟英雄4 (SLPM-65839) 资源分析结果
+====================================
+
+光盘
+- 文件: 半熟英雄4-7人的半熟英雄.iso
+- 类型: PS2 DVD (Mode1 / 2048 字节扇区)
+- 体积: 约 1.78 GiB（933104 扇区）
+
+ISO9660/UDF 目录里只有启动文件（约 4MB）
+- SYSTEM.CNF / SLPM_658.39 / IOP 模块
+- 游戏资源在无名扇区，由 ELF 内 19967 槽哈希表索引
+
+VFS 哈希表（ELF VA 0x432C48，12 字节/槽）
+- field0 = LBA
+- field2 = 打包后字节大小
+- field3 = 解压后大小（0 = 未压缩）
+- 约 9512 个唯一 (LBA, size)；其中 43 个是 mes 文案包
+- 其它常见头：VSF\0 音频、EGG\0 角色、SeBl、MPEG 00 00 01 ba、F7(19 = 0x19283746 压缩包
+- ELF 里的 Encryption/CRC-Error 字符串属于 FMV 宏块，不是 mes 打包
+
+压缩（EE 0x22bc28）
+- 8 字节头：u32 packed_size, u32 unpacked_size
+- 随后 LZSS：flag 字节 LSB=1 为字面量，0 为 2 字节匹配
+  offset = b0 | ((b1 & 0xF0)<<4)，length = (b1 & 0xF)+3，窗口 4096 / 起点 0xFEE
+- TIM2 / sprte 文件都是这层包装（type 字节 0x7f=TIM2, 0xdf=sprte）
+- 实现：tools/lzss.py
+
+文案文件格式（.mes）
+- 文件头 u32 = 字节 trie 根偏移
+- 正文：NUL 结尾字符串 + 以 ASCII key 为路径的字节 trie
+- key 明文：sysmes_ / menu_ / f_sun_ / ev_ / eg_ / d_ 等
+- 字形字节：(byte * 189) mod 256 还原；1 字节假名 0–89 / 片假名 +90
+- 2 字节码若 < 字库 bank1 数量则 +192 得到字形号
+- 引擎接口：LoadMes / OpenMes / PrintMes / GetMesLine（按行 strlen 切开）
+
+KIWI 字库
+- 运行时 6 套（RAM 里 magic "KIWI" version 17）
+  16x16 4bpp  192+1727  主字库（对话/菜单，style 1）
+  16x16 4bpp  192+837   中等
+  16x16 4bpp  192+349   子集（字形号正好覆盖 mes 用到的 192–540）
+  12x12 4bpp  192+123/124  小字
+  16x16 8bpp  90        彩色/特殊
+- 头 64 字节：+8/+10 宽高，+12 色深相关，+32/+34 两档字形数
+  +64 调色板，+68/+72 两档 4bpp 点阵，+76/+80 每字 2 字节度量
+- 1 字节码 0–191 = bank0（假名已核对：0=あ … 90=ア）
+- 2 字节码 +192 = bank1
+- 图集 PNG：extracted/font/kiwi_atlas/
+- 工具：tools/kiwi_font.py（从 eeMemory.bin 导出）
+
+LBA 580061 一带的 TIM2（256x128）
+- 已解压为 extracted/font/tim2_png/（33 张）
+- 内容是行星地图/地形，不是字库
+- 解析：tools/tim2.py
+
+已确认可读的日文（抽样）
+- 标题：はじめから / つづきから / とちゅうから / オプション / はやくして
+- 能力：こうげき / ぼうぎょ / スタミナ / すばやさ / せいしん / じんけい
+- 行星：星アルマムーン / ある星にアルマムーンという惑星があった！
+- 「半熟英雄4」のセーブデータが壊れています！
+- ○入力 / 決定 / なんとお呼びいたしましょう？ / 好きな人
+- チェック中・・・ / ヒマな将軍 / 終了します
+- 本当に隊を撤収させますか？ / ○を連打すると
+- 将軍と部隊が一体となり / 星ごと移動ができますぞ
+- セバスチャン殿、エッグマン、カトリ・デ・オマール
+- ひみつの言葉（jp 作 ひみつの始葉：始/言 撞字）/ カトリイネの妹
+- セーブに失敗しました / 部隊のくわしい情報です
+
+汉字对照（mes_codec.SPECIAL）
+- 假名 0–179 另表；SPECIAL 277 个码。catalog 24468 条 jp 已无 {编号} 占位
+- 同一编号会撞字（雄/込=469、装/領、開/戻/貢、始/言）。复合词/活用优先；汉化时重占槽
+- 图集序号 ≠ 文案码。对照：tools/mes_codec.py；重解：python3 tools/redecode_mes.py（会保留已填 zh）
+- 中文：tools/zh_pack.py + python3 tools/apply_zh.py → translation_catalog.csv 的 zh 列
+- 专名：extracted/GLOSSARY.txt
+- 姓名输入 A–Z 与汉字共槽（N=488 O=305 无汉字可读，已标拉丁）：
+  A知 B死 C体 D複 E少 F教 G早 H能 I惑 J分 K守 L小 M中
+  N O P力 Q激 R使 S大 T喜 U勢 V誰 W捨 X装 Y備 Z威
+  故「アナログコントローラ（DUALSHOCK2）」在 jp 里仍显示为 複勢知小大能O体守2
+- 未对完的上下文：extracted/font/unmapped_context.txt（现为空）
+
+导出
+- extracted/mes/*.bin                43 个光盘 mes + RAM 副本
+- extracted/text/*.txt               按文件解码文本
+- extracted/text/ALL_DECODED.txt     合并全文
+- extracted/translation_catalog.csv  约 24468 条（id, jp, zh, notes）
+- extracted/mes_file_index.csv       mes 文件 LBA/大小/key 样例
+- extracted/font/kiwi_atlas/         KIWI 字形图集（bank0 假名/数字已核对）
+- extracted/font/tim2_png/           解压后的 TIM2
+- tools/mes_codec.py / extract_mes.py / redecode_mes.py / lzss.py / tim2.py / kiwi_font.py / mips_disasm.py
+
+汉化下一步
+1. 继续填 zh（剧情 ev_/f_、蛋怪图鉴 eg_、迷宫 d_）。日文汉字不能直接当中文用
+2. 扩 KIWI 16x16 4bpp 字库，中文新表重编码 mes + LZSS 写回 ISO
+3. 角色显示名（ゼウス等）在 EGG，不在 mes
+4. 系统英文（NODATA / DUALSHOCK2 / HOT / OK / DEFCON）不要沿用日文汉字槽的字形
+5. 秘密蛋合言葉保持日文原文，方便对照攻略

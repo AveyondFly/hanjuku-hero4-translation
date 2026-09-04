@@ -1,0 +1,157 @@
+"""Power-egg battle lines B (nymp–rddr)."""
+from __future__ import annotations
+
+
+def by_id() -> dict[str, str]:
+    N = "宁芙："
+    B = "乱打教："
+    Gy = "行司："
+    M = "月光肌肉："
+    Ga = "观众："
+    C = "独眼巨人："
+    H = "重蛾："
+    J = "小蛾："
+    Y = "空叶将："
+    L = "西兰花·李："
+    T = "星之龙："
+    R = "压路杀手："
+    D = "红龙："
+    return {
+        # --- 宁芙 ---
+        "eg_pw_nymp_d#0": N + "宁芙稍微在坏笑。",
+        "eg_pw_nymp_d#1": "看来心情相当不错。",
+        "eg_pw_nymp_l": N + "啊啊啊，把大的给露出来了。",
+        "eg_pw_nymp_ms12#0": "宁芙失去了生存的力。",
+        "eg_pw_nymp_ms121#0": "宁芙失去了生存的力。",
+        "eg_pw_nymp_ms123": "宁芙把目光挪开了。",
+        "eg_pw_nymp_ms124": "宁芙把目光挪开了。",
+        "eg_pw_nymp_ms2#0": N + "呛人的人香里，",
+        "eg_pw_nymp_ms2#1": "！的火要灭了。。",
+        "eg_pw_nymp_ms21#0": N + "呛人的人香里，",
+        "eg_pw_nymp_ms21#1": "！的火要灭了。。",
+        "eg_pw_nymp_ms31": N + "大臀部鼓起来，强力一击直击了。。",
+        "eg_pw_nymp_vo1": N + "嗯嗯。呼，好身材啊！",
+        "eg_pw_nymp_vo2": N + "嗯嗯。让我测一下唤好吗？",
+        "eg_pw_nymp_vo3": N + "啊啊。赌上生死的人的战斗！累人呢！",
+        "eg_pw_nymp_w": N + "好久没闻这么好的唤了。",
+        # --- 乱打教 ---
+        "eg_pw_boka_d": B + "乱打教的腰带松了。啊还俺，还俺。",
+        "eg_pw_boka_l": B + "乱打教的修入人，变成协入了！",
+        "eg_pw_boka_ms1": B + "乱打教打出了马赫掌。",
+        "eg_pw_boka_ms21": "被乱打教用乱打掌打飞了。",
+        "eg_pw_boka_ms211": "被乱打教用乱打掌打飞了。",
+        "eg_pw_boka_ms22": B + "乱打教大大地空挥了。",
+        "eg_pw_boka_ms3": B + "完整土之力加农，识被打空了。",
+        "eg_pw_boka_name": "为新使道烦恼的、分负部赖君的设计队",
+        "eg_pw_boka_vo11": Gy + "哈克哟伊。还在。",
+        "eg_pw_boka_vo12": B + "乱打教哈——。",
+        "eg_pw_boka_vo21": B + "乱打教承让了。。",
+        "eg_pw_boka_vo22": B + "乱打教要把战威人给了啊——。",
+        "eg_pw_boka_vo3": B + "乱打教开食。让我用那个。。",
+        "eg_pw_boka_w1": Gy + "乱打教的胜利",
+        "eg_pw_boka_w2": B + "乱打教以的读星也承让了。。",
+        # --- 月光肌肉 ---
+        "eg_pw_moon_d": M + "月光肌肉的肌肉在抽动。",
+        "eg_pw_moon_d_k": M + "月光肌肉露出了愉快的表情。",
+        "eg_pw_moon_l": M + "靠增肌，这次才把你了！",
+        "eg_pw_moon_ms1": M + "月光肌肉露出了华（？）的人生。",
+        "eg_pw_moon_ms1_k": M + "月光肌肉从身体发出不可思议的汁。",
+        "eg_pw_moon_ms2": "月光肌肉把哑铃咔地吃了。",
+        "eg_pw_moon_ms21": "月光肌肉把哑铃咔地吃了。",
+        "eg_pw_moon_ms21_k": "月光肌肉把灌满力的一击复了。",
+        "eg_pw_moon_ms2_k": "月光肌肉把灌满力的一击复了。",
+        "eg_pw_moon_ms3": M + "月光肌肉把肌肉练到了肉体的极限。",
+        "eg_pw_moon_vo1": M + "哈哈——。哈哈哈。",
+        "eg_pw_moon_vo2": M + "哼哼嗯。",
+        "eg_pw_moon_vo31#0": M + "月光肌肉嗯姆喀啊啊啊。。",
+        "eg_pw_moon_vo31#1": Ga + "大哥——。好姿势——。",
+        "eg_pw_moon_w": M + "永久的肉体美。月——光肌肉。",
+        # --- 独眼巨人 ---
+        "eg_pw_cycl_d": C + "独眼巨人的小腿毛掉了几根。",
+        "eg_pw_cycl_l": C + "独眼巨人确确实实被干掉了。",
+        "eg_pw_cycl_ms1": C + "1临坏没入使用的中体在燃。",
+        "eg_pw_cycl_ms11": C + "独眼巨人，好臭。",
+        "eg_pw_cycl_ms2": C + "中逃的勇体飞出去了。。",
+        "eg_pw_cycl_ms21": C + "独眼巨人，好轻快。。",
+        "eg_pw_cycl_ms31": C + "出了1，打1发。咸。",
+        "eg_pw_cycl_ms32": C + "出了2，打2发。还行吧！",
+        "eg_pw_cycl_ms33": C + "出了3，打3发。挺不错。",
+        "eg_pw_cycl_ms34": C + "出了4，打4发。这种程度嘛。",
+        "eg_pw_cycl_ms35": C + "出了5，打5发。哦。好啊。",
+        "eg_pw_cycl_ms36": C + "出了6，打6发。太好了。号分。",
+        "eg_pw_cycl_vo3": C + "会出什么呢。",
+        "eg_pw_cycl_w": C + "呜吼。呜吼。",
+        # --- 重蛾 ---
+        "eg_pw_hvms_d#0": H + "重蛾挨了拳，",
+        "eg_pw_hvms_d#1": "感到力的强间。",
+        "eg_pw_hvms_l": H + "重蛾俺改酱失事了啊！",
+        "eg_pw_hvms_ms1#0": "重蛾把深深燃起的斩、打进一击里的心情之深",
+        "eg_pw_hvms_ms1#1": "教给了小蛾。",
+        "eg_pw_hvms_ms2#0": H + "打架，是魂与魂的碰撞。",
+        "eg_pw_hvms_ms2#1": "人与人号分的交流。",
+        "eg_pw_hvms_ms3": H + "重蛾用了极限。",
+        "eg_pw_hvms_vo1": H + "重蛾小子啊。给我看好了。",
+        "eg_pw_hvms_vo2": H + "重蛾这就是打架的置本。。",
+        "eg_pw_hvms_vo31#0": J + "妈妈？妈妈？",
+        "eg_pw_hvms_vo31#1": H + "对不起小子！",
+        "eg_pw_hvms_vo31#2": H + "重蛾连间酱的分，俺啊俺啊啊啊。。。",
+        "eg_pw_hvms_w": H + "重蛾怎样小子。这就是人的打架。",
+        # --- 空叶将 ---
+        "eg_pw_yjyu_d": Y + "空叶将的头盔稍微歪了！",
+        "eg_pw_yjyu_l": Y + "莫呜！",
+        "eg_pw_yjyu_ms1": Y + "空新收摇的？撤阵，一击了。。",
+        "eg_pw_yjyu_ms11": Y + "空新收摇的？撤阵，一击了。。",
+        "eg_pw_yjyu_ms2": Y + "空一入出现，把空叶将惑负了。",
+        "eg_pw_yjyu_ms21": Y + "空叶将的能力反转了。。",
+        "eg_pw_yjyu_ms3#0": Y + "空叶将连自己的！一起砍了上去。",
+        "eg_pw_yjyu_ms3#1": "这就是长军道。喜能惑大惑大武士。。",
+        "eg_pw_yjyu_vo1": Y + "布鲁噜哦。",
+        "eg_pw_yjyu_vo2": Y + "莫呼莫呼。。。",
+        "eg_pw_yjyu_vo3": Y + "布鲁噜莫呜呜呜——。。。",
+        "eg_pw_yjyu_w": Y + "莫呼哦哦哦哦——。。",
+        # --- 西兰花·李 ---
+        "eg_pw_broc_d": L + "西兰花·李把択连的动舔了一下。",
+        "eg_pw_broc_l": L + "不痛！",
+        "eg_pw_broc_ms1": L + "西兰花·李把双节棍连起来了。",
+        "eg_pw_broc_ms21#0": L + "吃西兰花就会连气哦。",
+        "eg_pw_broc_ms22#0": L + "吃西兰花就会连气哦。",
+        "eg_pw_broc_ms31#0": L + "西兰花·李把舍身一击打直了。",
+        "eg_pw_broc_ms31#1": "西兰花·李的能力变成了1。",
+        "eg_pw_broc_vo1": L + "阿乔。。",
+        "eg_pw_broc_vo2": L + "维他命诶诶诶诶。。。",
+        "eg_pw_broc_vo3": L + "喝哇——。喝哇——。喝哇——。",
+        "eg_pw_broc_w": L + "喝啊。",
+        # --- 星之龙 ---
+        "eg_pw_tera_d": T + "星之龙正拼命想让心情平静。",
+        "eg_pw_tera_l#0": T + "星之龙终于没能把壳",
+        "eg_pw_tera_l#1": "打开，就是这样！",
+        "eg_pw_tera_ms11": T + "星之龙想把经费读出来",
+        "eg_pw_tera_ms12": T + "做不到，暴怒了。",
+        "eg_pw_tera_ms21": T + "星之龙想把況字丢掉",
+        "eg_pw_tera_ms22": T + "做不到，暴怒了。",
+        "eg_pw_tera_ms31": T + "星之龙想把嫌喝掉",
+        "eg_pw_tera_ms32": T + "做不到，暴怒了————啪啪",
+        "eg_pw_tera_w#0": T + "星之龙想笑开，可",
+        "eg_pw_tera_w#1": "好像还连生着。",
+        # --- 压路杀手 ---
+        "eg_pw_roll_d": R + "压路杀手软乎乎的。",
+        "eg_pw_roll_l": R + "压路杀手没油，动不了了。",
+        "eg_pw_roll_ms1#0": R + "压路杀手一边碾，",
+        "eg_pw_roll_ms1#1": "一边想着心里的下饭菜。",
+        "eg_pw_roll_ms2": R + "以疼痛的份，用碾压在界效报了仇。",
+        "eg_pw_roll_ms21#0": R + "压路杀手还没伤到",
+        "eg_pw_roll_ms21#1": "能报仇的程度！",
+        "eg_pw_roll_ms3": R + "像全的圆一样，金操的转向。。",
+        "eg_pw_roll_w#0": R + "压路杀手",
+        "eg_pw_roll_w#1": "马上向金的舞台（全）去了。",
+        # --- 红龙 ---
+        "eg_pw_rddr_d": D + "红龙正在吼。",
+        "eg_pw_rddr_l": D + "红龙怒到动气断了！",
+        "eg_pw_rddr_ms1": D + "从人）里放出了大气之翼。。",
+        "eg_pw_rddr_ms2": D + "岩浆之炎把人吞进去了。",
+        "eg_pw_rddr_ms21": D + "岩浆之炎把人吞进去了。",
+        "eg_pw_rddr_ms3": "被红龙用火教択拖着吞了。",
+        "eg_pw_rddr_ms31": "被红龙用火教択拖着吞了。",
+        "eg_pw_rddr_ms32": D + "红龙捕捉失败了。",
+        "eg_pw_rddr_w": D + "红龙的怒气平息了！",
+    }

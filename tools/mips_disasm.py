@@ -114,7 +114,7 @@ def find_func_start(elf: bytes, va: int, max_back: int = 0x800) -> int:
 
 if __name__ == "__main__":
     import sys
-    elf = Path("/home/ubuntu/translation/extracted/SLPM_658.39").read_bytes()
+    elf = (Path(__file__).resolve().parent.parent / "extracted" / "SLPM_658.39").read_bytes()
     va = int(sys.argv[1], 16)
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 80
     print("\n".join(disasm_range(elf, va, n)))

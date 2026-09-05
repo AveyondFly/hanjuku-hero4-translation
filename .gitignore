@@ -8,7 +8,7 @@ __pycache__/
 venv/
 
 # Extracted binaries and regenerable dumps.
-# Keep the catalog, glossary, and indexes — those are the source/target of record.
+# Keep the catalog, glossary, zh CSVs, and indexes — those are the source of record.
 extracted/*
 !extracted/translation_catalog.csv
 !extracted/GLOSSARY.txt
@@ -18,3 +18,5 @@ extracted/*
 !extracted/zh_char_freq.csv
 !extracted/zh_char_rare.csv
 !extracted/zh_cmap.csv
+!extracted/zh_keep.csv
+!extracted/zh_alphabet.csv

@@ -155,7 +155,8 @@ def dump_ram_fonts(ram_path: Path, out_dir: Path) -> None:
 
 
 if __name__ == "__main__":
+    repo = Path(__file__).resolve().parent.parent
     dump_ram_fonts(
-        Path("/home/ubuntu/translation/extracted/ram/eeMemory.bin"),
-        Path("/home/ubuntu/translation/extracted/font/kiwi_atlas"),
+        repo / "extracted" / "ram" / "eeMemory.bin",
+        repo / "extracted" / "font" / "kiwi_atlas",
     )

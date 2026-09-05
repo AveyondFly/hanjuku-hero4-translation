@@ -21,14 +21,13 @@ from mes_codec import (  # noqa: E402
     pack_trie,
     walk_trie,
 )
+from zh_csv import keep_raw, kinds_by_id, load_cmap, zh_by_id  # noqa: E402
 
-ROOT = Path("/home/ubuntu/translation")
+ROOT = Path(__file__).resolve().parent.parent
 ISO = ROOT / "半熟英雄4-7人的半熟英雄.iso"
 ELF_EXTRACTED = ROOT / "extracted/SLPM_658.39"
 KIWI_BIN = ROOT / "extracted/font/zh/kiwi_16x16.bin"
 KIWI12_BIN = ROOT / "extracted/font/zh/kiwi_12x12.bin"
-CMAP_CSV = ROOT / "extracted/zh_cmap.csv"
-CATALOG = ROOT / "extracted/translation_catalog.csv"
 MES_INDEX = ROOT / "extracted/mes_file_index.csv"
 MES_DIR = ROOT / "extracted/mes"
 
@@ -65,39 +64,8 @@ DECODER_NEW = (
 DECODER_OLD = DECODER_NEW  # unused alias
 
 
-KEEP_RAW_PREFIXES = (
-    "sysmes_hiragana",
-    "sysmes_katakana",
-    "sysmes_dic_index_keyword",
-    "menu_secret_egg_word",
-)
-
-
 def fo(va: int) -> int:
     return va - LOAD_V + LOAD_FILE
-
-
-def load_cmap() -> dict[str, int]:
-    out: dict[str, int] = {}
-    with CMAP_CSV.open(encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            out[row["char"]] = int(row["glyph"])
-    return out
-
-
-def load_catalog() -> dict[str, str]:
-    out: dict[str, str] = {}
-    with CATALOG.open(encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            out[row["id"]] = row.get("zh") or ""
-    return out
-
-
-def keep_raw(sid: str) -> bool:
-    for pfx in KEEP_RAW_PREFIXES:
-        if sid == pfx or sid.startswith(pfx + "#"):
-            return True
-    return False
 
 
 def kiwi_ondisk(blob: bytes) -> bytes:
@@ -198,7 +166,12 @@ def transcode_raw(raw: bytes) -> bytes:
     return encode_tokens(decode_font_codes(raw, mul48=False), mul48=True)
 
 
-def rebuild_mes_file(orig: bytes, catalog: dict[str, str], cmap: dict[str, int]) -> bytes:
+def rebuild_mes_file(
+    orig: bytes,
+    catalog: dict[str, str],
+    cmap: dict[str, int],
+    kinds: dict[str, str],
+) -> bytes:
     rows = walk_trie(orig)
     out: list[tuple[bytes, list[bytes]]] = []
     for key, strs in rows:
@@ -207,7 +180,7 @@ def rebuild_mes_file(orig: bytes, catalog: dict[str, str], cmap: dict[str, int])
         for i, raw in enumerate(strs):
             sid = k if len(strs) == 1 else f"{k}#{i}"
             zh = catalog.get(sid) or ""
-            if zh.strip() and not keep_raw(sid):
+            if zh.strip() and not keep_raw(sid, kinds.get(sid, "")):
                 try:
                     new_strs.append(encode_merged(raw, zh, cmap, mul48=True))
                 except ValueError:
@@ -297,7 +270,8 @@ def update_pvd_sectors(fp, nsectors: int) -> None:
 
 def main() -> None:
     cmap = load_cmap()
-    catalog = load_catalog()
+    catalog = zh_by_id()
+    kinds = kinds_by_id()
     print(f"cmap {len(cmap)}  catalog zh {sum(1 for v in catalog.values() if v.strip())}")
 
     for g in list(range(0, 192, 17)) + [192, 250, 494, 1000, 192 + 2759]:
@@ -364,7 +338,7 @@ def main() -> None:
             src = MES_DIR / f"lba{lba:06d}_sz{size}_slot{slot}.bin"
             orig = src.read_bytes() if src.exists() else iso_read(fp, lba, size)
             try:
-                rebuilt = rebuild_mes_file(orig, catalog, cmap)
+                rebuilt = rebuild_mes_file(orig, catalog, cmap, kinds)
             except Exception as e:
                 print("mes fail", src.name, e)
                 n_fail += 1

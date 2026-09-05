@@ -2,7 +2,6 @@
 """Extract and decode all message files from the ISO + resume RAM."""
 from __future__ import annotations
 
-import csv
 import struct
 import sys
 from collections import Counter
@@ -16,8 +15,9 @@ from mes_codec import (  # noqa: E402
     looks_like_mes,
     walk_trie,
 )
+from zh_csv import CATALOG, classify, load_rows, save_rows  # noqa: E402
 
-ROOT = Path("/home/ubuntu/translation")
+ROOT = Path(__file__).resolve().parent.parent
 ISO = ROOT / "半熟英雄4-7人的半熟英雄.iso"
 ELF = ROOT / "extracted/SLPM_658.39"
 RAM = ROOT / "extracted/ram/eeMemory.bin"
@@ -176,19 +176,30 @@ def main() -> None:
         encoding="utf-8",
     )
 
-    # merged catalog
-    cat_path = OUT / "translation_catalog.csv"
-    # keep first occurrence of each id
-    seen = set()
-    with cat_path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["id", "jp", "zh", "notes"])
-        for sid, jp, notes in catalog:
-            if sid in seen:
-                continue
-            seen.add(sid)
-            w.writerow([sid, jp, "", notes])
-    print(f"catalog {len(seen)} unique ids -> {cat_path}")
+    old_zh: dict[str, str] = {}
+    old_kind: dict[str, str] = {}
+    if CATALOG.exists():
+        for row in load_rows():
+            old_zh[row["id"]] = row.get("zh") or ""
+            old_kind[row["id"]] = row.get("kind") or ""
+
+    seen: set[str] = set()
+    out_rows: list[dict[str, str]] = []
+    for sid, jp, notes in catalog:
+        if sid in seen:
+            continue
+        seen.add(sid)
+        out_rows.append(
+            {
+                "id": sid,
+                "jp": jp,
+                "zh": old_zh.get(sid, ""),
+                "notes": notes,
+                "kind": old_kind.get(sid) or classify(sid, jp),
+            }
+        )
+    save_rows(out_rows)
+    print(f"catalog {len(out_rows)} unique ids -> {CATALOG} (kept zh {sum(1 for v in old_zh.values() if v.strip())})")
 
     # also a readable all-in-one dump
     all_txt = TEXT_OUT / "ALL_DECODED.txt"

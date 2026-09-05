@@ -69,7 +69,7 @@ LBA 580061 一带的 TIM2（256x128）
 - 假名 0–179 另表；SPECIAL 277 个码。catalog 24468 条 jp 已无 {编号} 占位
 - 同一编号会撞字（雄/込=469、装/領、開/戻/貢、始/言）。复合词/活用优先；汉化时重占槽
 - 图集序号 ≠ 文案码。对照：tools/mes_codec.py；重解：python3 tools/redecode_mes.py（会保留已填 zh）
-- 中文：tools/zh_pack.py + python3 tools/apply_zh.py → translation_catalog.csv 的 zh 列
+- 中文：extracted/translation_catalog.csv 的 zh 列（python3 tools/apply_zh.py 规范化）
 - 专名：extracted/GLOSSARY.txt
 - 姓名输入 A–Z 与汉字共槽（N=488 O=305 无汉字可读，已标拉丁）：
   A知 B死 C体 D複 E少 F教 G早 H能 I惑 J分 K守 L小 M中
@@ -81,7 +81,7 @@ LBA 580061 一带的 TIM2（256x128）
 - extracted/mes/*.bin                43 个光盘 mes + RAM 副本
 - extracted/text/*.txt               按文件解码文本
 - extracted/text/ALL_DECODED.txt     合并全文
-- extracted/translation_catalog.csv  约 24468 条（id, jp, zh, notes）
+- extracted/translation_catalog.csv  约 24468 条（id, jp, zh, notes, kind）
 - extracted/mes_file_index.csv       mes 文件 LBA/大小/key 样例
 - extracted/font/kiwi_atlas/         KIWI 字形图集（bank0 假名/数字已核对）
 - extracted/font/tim2_png/           解压后的 TIM2

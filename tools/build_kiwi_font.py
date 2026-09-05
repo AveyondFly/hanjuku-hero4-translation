@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kiwi_font import bytes_per_glyph, decode_glyph, parse_header  # noqa: E402
 from mes_codec import HIRA, hira_to_kata  # noqa: E402
 
-ROOT = Path("/home/ubuntu/translation")
+ROOT = Path(__file__).resolve().parent.parent
 CSV = ROOT / "extracted/translation_catalog.csv"
 RAM = ROOT / "extracted/ram/eeMemory.bin"
 OUT = ROOT / "extracted/font/zh"

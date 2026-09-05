@@ -5,7 +5,6 @@ Does not touch the ISO. Use after editing SPECIAL in mes_codec.py.
 """
 from __future__ import annotations
 
-import csv
 import re
 import sys
 from collections import Counter
@@ -13,10 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mes_codec import SPECIAL, decode_string, walk_trie  # noqa: E402
+from zh_csv import CATALOG, classify, load_rows, save_rows  # noqa: E402
 
-ROOT = Path("/home/ubuntu/translation/extracted")
-MES = ROOT / "mes"
-TEXT = ROOT / "text"
+ROOT = Path(__file__).resolve().parent.parent
+MES = ROOT / "extracted" / "mes"
+TEXT = ROOT / "extracted" / "text"
 
 
 def main() -> None:
@@ -46,21 +46,27 @@ def main() -> None:
             lines.append("")
         (TEXT / f"{tag}.txt").write_text("\n".join(lines), encoding="utf-8")
 
-    csv_path = ROOT / "translation_catalog.csv"
     old_zh: dict[str, str] = {}
-    if csv_path.exists():
-        with csv_path.open(encoding="utf-8", newline="") as f:
-            for row in csv.DictReader(f):
-                z = (row.get("zh") or "").strip()
-                if z:
-                    old_zh[row["id"]] = row["zh"]
+    old_kind: dict[str, str] = {}
+    if CATALOG.exists():
+        for row in load_rows():
+            if (row.get("zh") or "").strip():
+                old_zh[row["id"]] = row["zh"]
+            if row.get("kind"):
+                old_kind[row["id"]] = row["kind"]
 
-    with csv_path.open("w", encoding="utf-8", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["id", "jp", "zh", "notes"])
-        for sid, jp, tag in catalog:
-            w.writerow([sid, jp, old_zh.get(sid, ""), tag])
-        print(f"preserved zh {len(old_zh)}")
+    out_rows = [
+        {
+            "id": sid,
+            "jp": jp,
+            "zh": old_zh.get(sid, ""),
+            "notes": tag,
+            "kind": old_kind.get(sid) or classify(sid, jp),
+        }
+        for sid, jp, tag in catalog
+    ]
+    save_rows(out_rows)
+    print(f"preserved zh {len(old_zh)} -> {CATALOG}")
 
     with (TEXT / "ALL_DECODED.txt").open("w", encoding="utf-8") as f:
         cur = None

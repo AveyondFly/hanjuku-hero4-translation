@@ -17,6 +17,7 @@ import struct
 from typing import Iterable
 
 MUL = 189  # inverse of 149 mod 256
+INV = 149  # (byte * 149) encodes t; (t * 189) recovers byte
 
 
 def s16(x: int) -> int:
@@ -24,8 +25,11 @@ def s16(x: int) -> int:
     return x - 0x10000 if x >= 0x8000 else x
 
 
-def decode_font_codes(data: bytes, font_max: int = 12000) -> list:
-    """Return a list of int glyph ids and ('C', kind, extra) controls."""
+def decode_font_codes(data: bytes, font_max: int = 12000, mul48: bool = False) -> list:
+    """Return a list of int glyph ids and ('C', kind, extra) controls.
+
+    mul48=True matches the patched EE decoder (mflo of a0*48).
+    """
     out: list = []
     i = 0
     n = len(data)
@@ -58,12 +62,206 @@ def decode_font_codes(data: bytes, font_max: int = 12000) -> list:
             i += 1
             v0 = ((-b1) & 0xFF) if b1 == b0 else ((b1 - b0) & 0xFF)
             a0 = (v0 - 1) & 0xFF
-            code = s16(((t >> 2) + 0xFFF0 + a0) & 0xFFFF)
+            add = (a0 * 48) if mul48 else a0
+            code = s16(((t >> 2) + 0xFFF0 + add) & 0xFFFF)
             if 0 <= code < 12000:
                 if code < font_max:
                     code = code + 192
             out.append(code)
     return out
+
+
+def _enc_byte(t: int) -> int:
+    return (t * INV) & 0xFF
+
+
+def _enc_delta(b0: int, v0: int) -> int:
+    """Second byte so decoder recovers v0 from (b1-b0) or (-b1) if equal.
+
+    Encoded strings are NUL-terminated, so neither byte may be 0. When
+    (b0+v0)&0xFF == 0 the additive path would emit NUL; that is exactly
+    the decoder's b1==b0 path (v0 == -b0).
+    """
+    v0 &= 0xFF
+    b1 = (b0 + v0) & 0xFF
+    if b1 == 0 or b1 == b0:
+        if ((-b0) & 0xFF) != v0:
+            raise ValueError(f"cannot encode delta v0={v0} with b0={b0}")
+        if b0 == 0:
+            raise ValueError("delta encoding would emit NUL")
+        return b0
+    return b1
+
+
+def encode_token(tok, mul48: bool = True) -> bytes:
+    """Encode one decoded token (glyph int or ('C', kind, extra))."""
+    if isinstance(tok, tuple) and tok[0] == "C":
+        kind = int(tok[1])
+        extra = tok[2]
+        t = (kind << 2) & 0xFF
+        b0 = _enc_byte(t)
+        if kind >= 8:
+            v0 = 0 if extra is None else (int(extra) & 0xFF)
+            raw = bytes((b0, _enc_delta(b0, v0)))
+        else:
+            raw = bytes((b0,))
+        if 0 in raw:
+            raise ValueError(f"control {kind} encoded a NUL: {raw.hex()}")
+        return raw
+    g = int(tok)
+    if 0 <= g < 192:
+        hi, r = divmod(g, 3)
+        t = (hi << 2) | (r + 1)
+        b = _enc_byte(t)
+        if b == 0:
+            raise ValueError(f"glyph {g} encoded a NUL")
+        return bytes((b,))
+    idx = g - 192
+    if idx < 0:
+        raise ValueError(f"cannot encode glyph {g}")
+    if not mul48:
+        total = idx + 16
+        # q in 16..63, a0 in 0..255, idx = q + a0 - 16
+        if total > 63 + 255:
+            raise ValueError(f"glyph {g} needs mul48 encoding")
+        q = 16
+        a0 = total - 16
+        if a0 > 255:
+            q = 63
+            a0 = total - 63
+        t = (q << 2) & 0xFF
+        b0 = _enc_byte(t)
+        raw = bytes((b0, _enc_delta(b0, (a0 + 1) & 0xFF)))
+        if 0 in raw:
+            raise ValueError(f"glyph {g} encoded a NUL: {raw.hex()}")
+        return raw
+    total = idx + 16
+    a0, q = divmod(total, 48)
+    if q < 16:
+        a0 -= 1
+        q += 48
+    if not (16 <= q <= 63 and 0 <= a0 <= 255):
+        raise ValueError(f"glyph {g} out of 2-byte range (q={q} a0={a0})")
+    t = (q << 2) & 0xFF
+    b0 = _enc_byte(t)
+    raw = bytes((b0, _enc_delta(b0, (a0 + 1) & 0xFF)))
+    if 0 in raw:
+        raise ValueError(f"glyph {g} encoded a NUL: {raw.hex()}")
+    return raw
+
+
+def encode_tokens(tokens, mul48: bool = True) -> bytes:
+    return b"".join(encode_token(t, mul48=mul48) for t in tokens)
+
+
+def encode_text(text: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
+    toks = []
+    for ch in text:
+        if ch in "\n\r":
+            continue
+        g = cmap.get(ch)
+        if g is None:
+            continue
+        toks.append(g)
+    return encode_tokens(toks, mul48=mul48)
+
+
+def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
+    """Keep original leading/trailing control codes; replace glyphs with zh."""
+    toks = decode_font_codes(orig, mul48=False)
+    prefix: list = []
+    suffix: list = []
+    seen_glyph = False
+    for t in toks:
+        if isinstance(t, tuple):
+            if not seen_glyph:
+                prefix.append(t)
+            else:
+                suffix.append(t)
+        else:
+            seen_glyph = True
+    body = []
+    for ch in zh:
+        if ch in "\n\r":
+            continue
+        g = cmap.get(ch)
+        if g is None:
+            continue
+        body.append(g)
+    return encode_tokens(list(prefix) + body + list(suffix), mul48=mul48)
+
+
+def pack_trie(entries: list[tuple[bytes, list[bytes]]]) -> bytes:
+    """Build a .mes blob from (key, strings) rows.
+
+    Duplicate keys exist in the original files (two NUL leaves under the
+    same prefix). Keep them as duplicate child bytes so lookup still sees
+    both leaves.
+    """
+
+    class Node:
+        __slots__ = ("child", "leaf")
+
+        def __init__(self) -> None:
+            self.child: list[tuple[int, Node]] = []
+            self.leaf: list[bytes] | None = None
+
+    root = Node()
+    for key, strs in entries:
+        k = key.rstrip(b"\x00") + b"\x00"
+        n = root
+        for i, b in enumerate(k):
+            last = i == len(k) - 1
+            if last:
+                leaf = Node()
+                leaf.leaf = strs
+                n.child.append((b, leaf))
+                break
+            nxt = None
+            for bb, ch in n.child:
+                if bb == b and ch.leaf is None:
+                    nxt = ch
+                    break
+            if nxt is None:
+                nxt = Node()
+                n.child.append((b, nxt))
+            n = nxt
+
+    data = bytearray(4)
+
+    def emit_strings(strs: list[bytes]) -> int:
+        off = len(data)
+        data.extend(struct.pack("<I", len(strs)))
+        for s in strs:
+            data.extend(s)
+            data.append(0)
+        return off
+
+    def emit_node(node: Node) -> int:
+        if node.leaf is not None and not node.child:
+            return emit_strings(node.leaf) | 0x80000000
+        items = sorted(node.child, key=lambda x: x[0])
+        child_raw = []
+        for b, ch in items:
+            if ch.leaf is not None and not ch.child:
+                child_raw.append((b, emit_strings(ch.leaf) | 0x80000000))
+            else:
+                child_raw.append((b, emit_node(ch)))
+        n = len(child_raw)
+        keys = bytes(b for b, _ in child_raw)
+        off = len(data)
+        data.extend(struct.pack("<I", n))
+        data.extend(keys)
+        table_off = (off + 4 + n + 3) & ~3
+        data.extend(b"\x00" * (table_off - len(data)))
+        for _, ptr in child_raw:
+            data.extend(struct.pack("<I", ptr & 0xFFFFFFFF))
+        return off
+
+    root_off = emit_node(root)
+    struct.pack_into("<I", data, 0, root_off)
+    return bytes(data)
+
 
 
 # Hiragana 0-89, verified against:

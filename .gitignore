@@ -15,3 +15,6 @@ extracted/*
 !extracted/RESOURCE_MAP.txt
 !extracted/mes_file_index.csv
 !extracted/message_ids.txt
+!extracted/zh_char_freq.csv
+!extracted/zh_char_rare.csv
+!extracted/zh_cmap.csv

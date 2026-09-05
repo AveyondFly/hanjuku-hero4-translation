@@ -169,6 +169,13 @@ def encode_text(text: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
 # Must match zh_csv.SKIP_CMAP_CHARS / build_kiwi_font extras skip.
 SKIP_GLYPH = frozenset(" \t\n\r\u3000")
 
+# PrintMes C8 extra 13 opens the name plate, extra 189 closes it.
+# Orig 482/254 were empty glue; 277/314 were JP 「. All four ids are
+# real Chinese glyphs now (482=斗), so never copy or re-insert them.
+_SPEAKER_OPEN = 13
+_SPEAKER_CLOSE = 189
+_SKIP_AFTER_NAME = frozenset({482, 254, 277, 314})
+
 
 class MissingGlyphs(ValueError):
     """zh contains characters that have no cmap id (would have been dropped)."""
@@ -178,9 +185,86 @@ class MissingGlyphs(ValueError):
         super().__init__(f"not in cmap: {chars}")
 
 
+def _is_ctrl(tok, kind: int, extra=None) -> bool:
+    return (
+        isinstance(tok, tuple)
+        and tok[0] == "C"
+        and tok[1] == kind
+        and (extra is None or tok[2] == extra)
+    )
+
+
+def _zh_tokens(zh: str, cmap: dict[str, int]) -> list:
+    """Map zh to glyph ids. Catalog newlines become PrintMes kind-1 breaks."""
+    missing: list[str] = []
+    seen_miss: set[str] = set()
+    out: list = []
+    for ch in zh:
+        if ch == "\r":
+            continue
+        if ch == "\n":
+            out.append(("C", 1, None))
+            continue
+        if ch in SKIP_GLYPH:
+            continue
+        g = cmap.get(ch)
+        if g is None:
+            if ch not in seen_miss:
+                seen_miss.add(ch)
+                missing.append(ch)
+            continue
+        out.append(g)
+    if missing:
+        raise MissingGlyphs("".join(missing))
+    return out
+
+
+def _split_speaker_zh(zh: str) -> tuple[str, str] | None:
+    for sep in ("：", ":"):
+        i = zh.find(sep)
+        if i > 0:
+            return zh[:i], zh[i + 1 :]
+    return None
+
+
+def _pop_trailing_ctrls(toks: list) -> tuple[list, list]:
+    suffix: list = []
+    while toks and isinstance(toks[-1], tuple):
+        suffix.insert(0, toks.pop())
+    return toks, suffix
+
+
 def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
-    """Keep original leading/trailing control codes; replace glyphs with zh."""
+    """Replace orig glyphs with zh; keep PrintMes controls, including name plates.
+
+    Dialogue strings are `C8:13` + name + `C8:189` + body. A previous merge
+    flattened that into one glyph run, so the first sentence sat in the name
+    bubble. Rebuild the closer. `名字：正文` fills the two sides; a C9 name
+    insert in the name slot is left alone (the injected speaker).
+    """
     toks = decode_font_codes(orig, mul48=False)
+    i13 = next(
+        (i for i, t in enumerate(toks) if _is_ctrl(t, 8, _SPEAKER_OPEN)),
+        None,
+    )
+    if i13 is None:
+        return encode_tokens(_merge_plain(toks, zh, cmap), mul48=mul48)
+    i189 = next(
+        (
+            i
+            for i, t in enumerate(toks)
+            if i > i13 and _is_ctrl(t, 8, _SPEAKER_CLOSE)
+        ),
+        None,
+    )
+    if i189 is None:
+        merged = _merge_speaker_recovered(toks, i13, zh, cmap)
+    else:
+        merged = _merge_speaker(toks, i13, i189, zh, cmap)
+    return encode_tokens(merged, mul48=mul48)
+
+
+def _merge_plain(toks: list, zh: str, cmap: dict[str, int]) -> list:
     prefix: list = []
     suffix: list = []
     seen_glyph = False
@@ -192,22 +276,62 @@ def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True
                 suffix.append(t)
         else:
             seen_glyph = True
-    missing: list[str] = []
-    seen_miss: set[str] = set()
-    body = []
-    for ch in zh:
-        if ch in SKIP_GLYPH:
+    return list(prefix) + _zh_tokens(zh, cmap) + list(suffix)
+
+
+def _merge_speaker(toks: list, i13: int, i189: int, zh: str, cmap: dict[str, int]) -> list:
+    head = toks[: i13 + 1]
+    orig_name = toks[i13 + 1 : i189]
+    rest = list(toks[i189 + 1 :])
+    rest, suffix = _pop_trailing_ctrls(rest)
+    bridge: list = []
+    while rest and (
+        isinstance(rest[0], tuple) or rest[0] in _SKIP_AFTER_NAME
+    ):
+        t = rest.pop(0)
+        if isinstance(t, int):
             continue
-        g = cmap.get(ch)
-        if g is None:
-            if ch not in seen_miss:
-                seen_miss.add(ch)
-                missing.append(ch)
-            continue
-        body.append(g)
-    if missing:
-        raise MissingGlyphs("".join(missing))
-    return encode_tokens(list(prefix) + body + list(suffix), mul48=mul48)
+        bridge.append(t)
+    name_has_ctrl = any(isinstance(t, tuple) for t in orig_name)
+    split = _split_speaker_zh(zh)
+    if name_has_ctrl:
+        name_toks = list(orig_name)
+        body_toks = _zh_tokens(zh, cmap)
+    elif split:
+        name_toks = _zh_tokens(split[0], cmap)
+        body_toks = _zh_tokens(split[1], cmap)
+    else:
+        name_toks = list(orig_name)
+        body_toks = _zh_tokens(zh, cmap)
+    return (
+        list(head)
+        + name_toks
+        + [("C", 8, _SPEAKER_CLOSE)]
+        + bridge
+        + body_toks
+        + suffix
+    )
+
+
+def _merge_speaker_recovered(toks: list, i13: int, zh: str, cmap: dict[str, int]) -> list:
+    """ISO already lost C8:189; rebuild it from `名字：正文`."""
+    head = toks[: i13 + 1]
+    rest = list(toks[i13 + 1 :])
+    rest, suffix = _pop_trailing_ctrls(rest)
+    split = _split_speaker_zh(zh)
+    if split:
+        name_toks = _zh_tokens(split[0], cmap)
+        body_toks = _zh_tokens(split[1], cmap)
+    else:
+        name_toks = []
+        body_toks = _zh_tokens(zh, cmap)
+    return (
+        list(head)
+        + name_toks
+        + [("C", 8, _SPEAKER_CLOSE)]
+        + body_toks
+        + suffix
+    )
 
 
 def pack_trie(entries: list[tuple[bytes, list[bytes]]]) -> bytes:

@@ -8,14 +8,16 @@ Default path:
     → patch_iso.py         (decoder + font pack + recode mes)
     → patch_generals.py
 
-Refuses to write the ISO while PCSX2 is running (override: --allow-pcsx2).
-Does not kill the emulator. --check reports missing glyphs and exits.
+Refuses to write the ISO while PCSX2 is running unless the emulator is
+stopped first (default: quit PCSX2). --allow-pcsx2 writes live (unsafe).
+--check reports missing glyphs and exits.
 """
 from __future__ import annotations
 
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -43,6 +45,27 @@ def pcsx2_pids() -> list[str]:
         )
         found.extend(p for p in r.stdout.split() if p)
     return sorted(set(found))
+
+
+def stop_pcsx2() -> None:
+    pids = pcsx2_pids()
+    if not pids:
+        return
+    print("stopping PCSX2 (pid " + ", ".join(pids) + ")")
+    for name in PCSX2_NAMES:
+        subprocess.run(["pkill", "-x", name], check=False)
+    for _ in range(40):
+        if not pcsx2_pids():
+            print("PCSX2 stopped")
+            return
+        time.sleep(0.25)
+    for name in PCSX2_NAMES:
+        subprocess.run(["pkill", "-9", "-x", name], check=False)
+    time.sleep(0.5)
+    left = pcsx2_pids()
+    if left:
+        raise SystemExit("could not stop PCSX2 (pid " + ", ".join(left) + ")")
+    print("PCSX2 killed")
 
 
 def report_missing(missing: dict[str, list[str]]) -> None:
@@ -87,7 +110,7 @@ def main() -> int:
     ap.add_argument(
         "--allow-pcsx2",
         action="store_true",
-        help="write ISO even if PCSX2 is running (unsafe)",
+        help="write ISO even if PCSX2 is running (unsafe; default is to quit it first)",
     )
     args = ap.parse_args()
 
@@ -127,22 +150,19 @@ def main() -> int:
         print("skip ISO (--no-iso)")
         return 0
 
-    pids = pcsx2_pids()
-    if pids and not args.allow_pcsx2:
-        raise SystemExit(
-            "PCSX2 is running (pid "
-            + ", ".join(pids)
-            + "). Quit it fully, then re-run. "
-            "Override with --allow-pcsx2 if you really mean to write the ISO live."
-        )
-    if pids:
-        print("WARNING: PCSX2 running; writing ISO anyway (--allow-pcsx2)")
+    if args.allow_pcsx2:
+        if pcsx2_pids():
+            print("WARNING: PCSX2 running; writing ISO anyway (--allow-pcsx2)")
+        extra = ["--allow-pcsx2"]
+    else:
+        stop_pcsx2()
+        extra = []
 
-    run_tool("patch_iso.py")
+    run_tool("patch_iso.py", extra)
     if not args.no_generals:
         run_tool("patch_generals.py")
-    print("\nrebuild done. Fully quit PCSX2 and boot the ISO; do not load old savestates.")
-    print("HUD weekday-hero / kingdom names are recoded in VFS slot 0 (PrintMes stays unhooked).")
+    print("\nrebuild done. Restart PCSX2 and boot the ISO; do not load old savestates.")
+    print("HUD hero/planet/egg names are recoded in VFS slot 0 (PrintMes stays unhooked).")
     return 0
 
 

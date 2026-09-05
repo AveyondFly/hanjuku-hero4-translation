@@ -14,6 +14,7 @@ import csv
 import struct
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -647,23 +648,126 @@ def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
 
 
 # VFS slot 0 (LBA from hash[0]) is an F7-style directory. Subfiles used at
-# new-game init (0x236c48): 4 = 100-byte units, 5 = 7×84 weekday heroes
-# (name at +24), 9 = 518×42 map nodes (kingdom title at +12).
+# new-game init (0x236c48): 0 = 200×64 egg-monsters (name +8, ASCII id +41),
+# 1 = 1000×48 skills (5 slots per egg, name +6), 4 = 100-byte units,
+# 5 = 7×84 weekday heroes (name at +24), 9 = 518×42 map nodes (title +12).
 SLOT0_DIR_INDEXES = (4, 5, 9)
+EGG_REC = 64
+EGG_NAME_OFF = 8
+EGG_ID_OFF = 41
+EGG_NAME_ROOM = EGG_ID_OFF - EGG_NAME_OFF
+SKILL_REC = 48
+SKILL_NAME_OFF = 6
+SKILL_NAME_ROOM = SKILL_REC - SKILL_NAME_OFF
+SKILL_SLOTS_PER_EGG = 5
+
+
+def _wrap_zh_name(cmap: dict[str, int], zh: str) -> bytes:
+    return encode_tokens(
+        [NAME_PREFIX, *[_zh_glyph(cmap, ch) for ch in zh], NAME_SUFFIX],
+        mul48=True,
+    )
+
+
+def _write_name_field(buf: bytearray, off: int, raw: bytes, room: int) -> bool:
+    if not raw or len(raw) + 1 > room:
+        return False
+    buf[off : off + len(raw)] = raw
+    buf[off + len(raw) : off + room] = b"\x00" * (room - len(raw))
+    return True
+
+
+def _slot0_put_sub(blob: bytearray, ent: dict, plain: bytes) -> None:
+    enc = encrypt_sub(plain, ent)
+    fake = bytearray(ent["off"] + len(enc))
+    fake[ent["off"] : ent["off"] + len(enc)] = enc
+    if decrypt_sub(fake, ent) != bytes(plain):
+        raise SystemExit("slot0 encrypt roundtrip failed")
+    blob[ent["off"] : ent["off"] + ent["size"]] = enc
+
+
+def _patch_egg_name_table(plain: bytearray, cmap: dict[str, int], zhmap: dict[str, str]) -> int:
+    n = 0
+    nrec = len(plain) // EGG_REC
+    for i in range(nrec):
+        base = i * EGG_REC
+        rec = plain[base : base + EGG_REC]
+        z = rec.find(b"\x00", EGG_ID_OFF)
+        if z < 0:
+            z = EGG_REC
+        gid = bytes(rec[EGG_ID_OFF:z]).decode("ascii", "replace")
+        if not gid.startswith("eg_"):
+            continue
+        zh = (zhmap.get(gid) or "").strip()
+        if not zh:
+            continue
+        new = _wrap_zh_name(cmap, zh)
+        cur = bytes(rec[EGG_NAME_OFF : EGG_NAME_OFF + EGG_NAME_ROOM])
+        padded = new.ljust(EGG_NAME_ROOM, b"\x00")
+        if cur == padded:
+            continue
+        if not _write_name_field(plain, base + EGG_NAME_OFF, new, EGG_NAME_ROOM):
+            print(f"slot0 egg skip {gid}: {zh!r} needs {len(new)}+NUL, room {EGG_NAME_ROOM}")
+            continue
+        n += 1
+    return n
+
+
+def _patch_egg_skill_table(
+    egg_plain: bytes,
+    skill_plain: bytearray,
+    cmap: dict[str, int],
+    zhmap: dict[str, str],
+) -> int:
+    n = 0
+    nrec = len(egg_plain) // EGG_REC
+    for i in range(nrec):
+        rec = egg_plain[i * EGG_REC : (i + 1) * EGG_REC]
+        z = rec.find(b"\x00", EGG_ID_OFF)
+        if z < 0:
+            z = EGG_REC
+        gid = bytes(rec[EGG_ID_OFF:z]).decode("ascii", "replace")
+        if not gid.startswith("eg_"):
+            continue
+        for k in range(SKILL_SLOTS_PER_EGG):
+            si = i * SKILL_SLOTS_PER_EGG + k
+            off = si * SKILL_REC
+            if off + SKILL_REC > len(skill_plain):
+                break
+            raw = bytes(skill_plain[off + SKILL_NAME_OFF : off + SKILL_REC]).split(b"\x00", 1)[0]
+            if not raw:
+                continue
+            zh = (zhmap.get(f"{gid}_at{k + 1}") or "").strip()
+            if not zh:
+                continue
+            new = _wrap_zh_name(cmap, zh)
+            cur = bytes(skill_plain[off + SKILL_NAME_OFF : off + SKILL_REC])
+            padded = new.ljust(SKILL_NAME_ROOM, b"\x00")
+            if cur == padded:
+                continue
+            if not _write_name_field(skill_plain, off + SKILL_NAME_OFF, new, SKILL_NAME_ROOM):
+                print(
+                    f"slot0 skill skip {gid}_at{k + 1}: {zh!r} "
+                    f"needs {len(new)}+NUL, room {SKILL_NAME_ROOM}"
+                )
+                continue
+            n += 1
+    return n
 
 
 def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
-    """Recode weekday-hero and starting-planet names in VFS slot 0.
+    """Recode HUD names in VFS slot 0 (heroes, planets, egg-monsters, skills).
 
     Those strings are XOR/t1-scrambled on disc, so a raw ISO search misses
-    them. The loader (0x362928) decrypts into RAM; HUD GetName (0x2365d8)
-    then reads hero[+24]. Do not hook PrintMes.
+    them. The loader (0x362928) decrypts into RAM. Do not hook PrintMes.
+    Egg display names use catalog ids such as eg_cl_eggm / eg_cl_eggm_at1.
     """
     lba, packed, _unp = struct.unpack_from("<III", elf, fo(TABLE_VA))
     if lba < 1 or packed < 64:
         raise SystemExit(f"VFS slot 0 looks empty lba={lba} size={packed}")
     blob = bytearray(iso_read(fp, lba, packed))
     entries = _hud_name_entries(cmap)
+    zhmap = zh_by_id()
     total = 0
     for idx in SLOT0_DIR_INDEXES:
         ent = parse_dir_entry(bytes(blob[idx * 8 : idx * 8 + 8]))
@@ -677,14 +781,28 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
         if n == 0:
             print(f"slot0[{idx}] no HUD names")
             continue
-        enc = encrypt_sub(bytes(plain), ent)
-        fake = bytearray(ent["off"] + len(enc))
-        fake[ent["off"] : ent["off"] + len(enc)] = enc
-        if decrypt_sub(fake, ent) != bytes(plain):
-            raise SystemExit(f"slot0[{idx}] encrypt roundtrip failed")
-        blob[ent["off"] : ent["off"] + ent["size"]] = enc
+        _slot0_put_sub(blob, ent, bytes(plain))
         total += n
         print(f"slot0[{idx}] recoded {n} names (off={ent['off']} size={ent['size']})")
+
+    egg_ent = parse_dir_entry(bytes(blob[0:8]))
+    skill_ent = parse_dir_entry(bytes(blob[8:16]))
+    egg_plain = bytearray(decrypt_sub(blob, egg_ent))
+    skill_plain = bytearray(decrypt_sub(blob, skill_ent))
+    n_egg = _patch_egg_name_table(egg_plain, cmap, zhmap)
+    n_sk = _patch_egg_skill_table(bytes(egg_plain), skill_plain, cmap, zhmap)
+    if n_egg:
+        _slot0_put_sub(blob, egg_ent, bytes(egg_plain))
+        print(f"slot0[0] recoded {n_egg} egg names (off={egg_ent['off']} size={egg_ent['size']})")
+    else:
+        print("slot0[0] no egg names")
+    if n_sk:
+        _slot0_put_sub(blob, skill_ent, bytes(skill_plain))
+        print(f"slot0[1] recoded {n_sk} egg skills (off={skill_ent['off']} size={skill_ent['size']})")
+    else:
+        print("slot0[1] no egg skills")
+    total += n_egg + n_sk
+
     if total == 0:
         already = 0
         for idx in SLOT0_DIR_INDEXES:
@@ -693,10 +811,11 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
                 continue
             plain = decrypt_sub(blob, ent)
             already += sum(plain.count(new) for _old, new in entries)
+        already += _patch_egg_name_table(bytearray(decrypt_sub(blob, egg_ent)), cmap, zhmap)
         if already:
-            print(f"slot0 instance names already recoded ({already} zh hits); skip")
+            print(f"slot0 names already recoded; skip")
             return
-        raise SystemExit("slot0 HUD names: nothing replaced (directory shifted?)")
+        raise SystemExit("slot0 HUD/egg names: nothing replaced (directory shifted?)")
     iso_write(fp, lba, bytes(blob), packed)
     print(f"slot0 instance names: {total} replacements, LBA {lba}")
 
@@ -778,22 +897,39 @@ def pcsx2_pids() -> list[str]:
     return sorted(set(found))
 
 
+def stop_pcsx2() -> None:
+    """Quit PCSX2 so the ISO is not written while mapped."""
+    pids = pcsx2_pids()
+    if not pids:
+        return
+    print("stopping PCSX2 (pid " + ", ".join(pids) + ")")
+    for name in ("pcsx2-qt", "pcsx2", "PCSX2"):
+        subprocess.run(["pkill", "-x", name], check=False)
+    for _ in range(40):
+        if not pcsx2_pids():
+            print("PCSX2 stopped")
+            return
+        time.sleep(0.25)
+    for name in ("pcsx2-qt", "pcsx2", "PCSX2"):
+        subprocess.run(["pkill", "-9", "-x", name], check=False)
+    time.sleep(0.5)
+    left = pcsx2_pids()
+    if left:
+        raise SystemExit("could not stop PCSX2 (pid " + ", ".join(left) + ")")
+    print("PCSX2 killed")
+
+
 def main() -> None:
     fonts_only = "--fonts-only" in sys.argv
     slot0_only = "--slot0-names-only" in sys.argv
     if fonts_only and slot0_only:
         raise SystemExit("use only one of --fonts-only / --slot0-names-only")
 
-    pids = pcsx2_pids()
-    if pids and "--allow-pcsx2" not in sys.argv:
-        raise SystemExit(
-            "PCSX2 is running (pid "
-            + ", ".join(pids)
-            + "). Quit it fully, then re-run. "
-            "Override with --allow-pcsx2 if you really mean to write the ISO live."
-        )
-    if pids:
-        print("WARNING: PCSX2 running; writing ISO anyway (--allow-pcsx2)")
+    if "--allow-pcsx2" in sys.argv:
+        if pcsx2_pids():
+            print("WARNING: PCSX2 running; writing ISO anyway (--allow-pcsx2)")
+    else:
+        stop_pcsx2()
 
     if slot0_only:
         cmap = load_cmap()

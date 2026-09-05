@@ -84,4 +84,4 @@ Do **not** Read: `dic.csv`, `dungeon.csv`, `dungeon_other.csv`, `egg_*.csv`,
 - `kind=keep` (kana tables / 合言葉): zh must equal jp. Empty jp stays empty zh.
 - Generals: `kind=name` / `kind=hobby`.
 - After catalog zh edits, default to `python3 tools/rebuild.py` (apply + missing-glyph font rebuild + patch ISO + generals). `rebuild.py --check` only reports cmap gaps.
-- Do not run `patch_iso.py` while skipping a font rebuild if zh has new characters; missing glyphs now abort. PCSX2 must be fully quit before writing the ISO.
+- `rebuild.py` / `patch_iso.py` quit PCSX2 before writing the ISO. Do not load old savestates after a patch.

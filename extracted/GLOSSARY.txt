@@ -58,6 +58,10 @@
   （`inst_hero_seva`、`inst_planet_sun` 等）。`patch_iso.py` 按 kind（hero / planet / planet_init）重编码。
 - 改 zh 后 `python3 tools/rebuild.py`，或只灌名：`python3 tools/patch_iso.py --slot0-names-only`。
 
+部队详情蛋怪名／技能
+- 左侧名单和技能（エッグチョップ等）不是 mes，在 VFS 槽 0 子文件 0/1。译文仍在各 `egg_*.csv`（`eg_cl_eggm`、`eg_cl_eggm_at1`）。
+- 体型「大／中／小」已是 `sysmes_eggmon_size`，格子只有一字，保持「大中小」。
+
 星球
 - アルマムーン     阿尔玛之月
 - ロマンシング     浪漫（星·浪漫）

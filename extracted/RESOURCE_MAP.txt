@@ -99,6 +99,8 @@ LBA 580061 一带的 TIM2（256x128）
      不要挂钩 PrintMes（`0x2DB990`）——jal 会死循环，j 进 libcdvd `.data` 洞穴（`0x42E120`）
      会 TLB miss / 跳到未对齐 PC。
    - 王国名旧后缀 2 字节「星」被 ×48 解码器读成「啊」，汉化时去掉该后缀。
-   - HUD「ポッキリ」按贴图处理，暂不汉化；ELF 里只有调试句被改成「波奇利」
+   - 蛋怪显示名／技能名不走 mes，在 VFS 槽 0 子文件 0（200×64，名+8，ASCII id +41）
+     和子文件 1（每只蛋 5 个 48 字节技能槽，名+6）。译文仍用 catalog 的 `eg_cl_eggm` /
+     `eg_cl_eggm_at1` 等。`patch_iso.py` 随槽 0 一起重编码。
 4. 系统英文（NODATA / DUALSHOCK2 / HOT / OK / DEFCON）不要沿用日文汉字槽的字形
 5. 秘密蛋合言葉保持日文原文，方便对照攻略

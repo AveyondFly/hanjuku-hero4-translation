@@ -186,7 +186,7 @@ python3 tools/patch_generals.py
 python3 tools/rebuild.py
 ```
 
-它会：规范化 catalog → 扫一遍 zh 对 cmap，缺字就重建 KIWI → 灌 ELF/字库/mes → 灌将军表。PCSX2 开着时拒绝写 ISO（`--allow-pcsx2` 可强行，不安全）。只检查缺字：
+它会：规范化 catalog → 扫一遍 zh 对 cmap，缺字就重建 KIWI → 灌 ELF/字库/mes → 灌将军表。默认会先关掉 PCSX2 再写盘（`--allow-pcsx2` 可强行在模拟器开着时写，不安全）。只检查缺字：
 
 ```
 python3 tools/rebuild.py --check

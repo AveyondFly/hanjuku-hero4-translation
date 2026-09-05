@@ -15,7 +15,7 @@ from mes_codec import (  # noqa: E402
     looks_like_mes,
     walk_trie,
 )
-from zh_csv import CATALOG, classify, load_rows, save_rows  # noqa: E402
+from zh_csv import CATALOG_DIR, classify, load_rows, preserve_extra_rows, save_rows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 ISO = ROOT / "半熟英雄4-7人的半熟英雄.iso"
@@ -176,12 +176,12 @@ def main() -> None:
         encoding="utf-8",
     )
 
+    old_rows = load_rows()
     old_zh: dict[str, str] = {}
     old_kind: dict[str, str] = {}
-    if CATALOG.exists():
-        for row in load_rows():
-            old_zh[row["id"]] = row.get("zh") or ""
-            old_kind[row["id"]] = row.get("kind") or ""
+    for row in old_rows:
+        old_zh[row["id"]] = row.get("zh") or ""
+        old_kind[row["id"]] = row.get("kind") or ""
 
     seen: set[str] = set()
     out_rows: list[dict[str, str]] = []
@@ -198,8 +198,12 @@ def main() -> None:
                 "kind": old_kind.get(sid) or classify(sid, jp),
             }
         )
+    out_rows = preserve_extra_rows(old_rows, out_rows)
     save_rows(out_rows)
-    print(f"catalog {len(out_rows)} unique ids -> {CATALOG} (kept zh {sum(1 for v in old_zh.values() if v.strip())})")
+    print(
+        f"catalog {len(out_rows)} unique ids -> {CATALOG_DIR} "
+        f"(kept zh {sum(1 for v in old_zh.values() if v.strip())})"
+    )
 
     # also a readable all-in-one dump
     all_txt = TEXT_OUT / "ALL_DECODED.txt"

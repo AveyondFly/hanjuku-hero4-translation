@@ -1,5 +1,6 @@
 # Treat the catalog as text so diffs stay readable.
-extracted/translation_catalog.csv text eol=lf
+extracted/catalog/*.csv text eol=lf
+extracted/catalog/*.txt text eol=lf
 extracted/zh_*.csv text eol=lf
 *.py text eol=lf
 *.txt text eol=lf

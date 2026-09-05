@@ -2,7 +2,9 @@
 """Patch the Hanjuku Hero 4 ISO: ELF 2-byte font decoder, 16x16 + 12x12 KIWI,
 and recoded mes strings.
 
-Font pack slot 49: index 0 (16x16) and indices 2–3 (12x12) are replaced.
+Font pack slot 49: indices 0–1 (16x16 main + medium) and 2–3 (12x12)
+are replaced with the full Chinese cmap (n1=2760). Index 4 (8bpp)
+and 5 (16x16 subset) stay stock.
 """
 from __future__ import annotations
 
@@ -269,17 +271,21 @@ def update_pvd_sectors(fp, nsectors: int) -> None:
 
 
 def main() -> None:
-    cmap = load_cmap()
-    catalog = zh_by_id()
-    kinds = kinds_by_id()
-    print(f"cmap {len(cmap)}  catalog zh {sum(1 for v in catalog.values() if v.strip())}")
+    fonts_only = "--fonts-only" in sys.argv
+    if fonts_only:
+        print("fonts-only: skip mes recode")
+    else:
+        cmap = load_cmap()
+        catalog = zh_by_id()
+        kinds = kinds_by_id()
+        print(f"cmap {len(cmap)}  catalog zh {sum(1 for v in catalog.values() if v.strip())}")
 
-    for g in list(range(0, 192, 17)) + [192, 250, 494, 1000, 192 + 2759]:
-        raw = encode_token(g, mul48=True)
-        back = decode_font_codes(raw + b"\x00", font_max=12000, mul48=True)
-        if back != [g]:
-            raise SystemExit(f"encode roundtrip fail {g} -> {back} raw={raw.hex()}")
-    print("glyph encode roundtrip ok")
+        for g in list(range(0, 192, 17)) + [192, 250, 494, 1000, 192 + 2759]:
+            raw = encode_token(g, mul48=True)
+            back = decode_font_codes(raw + b"\x00", font_max=12000, mul48=True)
+            if back != [g]:
+                raise SystemExit(f"encode roundtrip fail {g} -> {back} raw={raw.hex()}")
+        print("glyph encode roundtrip ok")
 
     elf = bytearray(ELF_EXTRACTED.read_bytes())
     patch_decoder(elf)
@@ -302,10 +308,18 @@ def main() -> None:
         fonts = extract_fonts(pack_in)
         print("original fonts", [f[:4] for f in fonts], [len(f) for f in fonts])
         n0, n1 = struct.unpack_from("<HH", fonts[0], 32)
-        print(f"style1 {n0}+{n1} {len(fonts[0])} bytes")
-        fonts[0] = kiwi_ondisk(KIWI_BIN.read_bytes())
-        n0, n1 = struct.unpack_from("<HH", fonts[0], 32)
-        print(f"new style1 {n0}+{n1} {len(fonts[0])} bytes")
+        print(f"idx0 main 16x16 {n0}+{n1} {len(fonts[0])} bytes")
+        n0m, n1m = struct.unpack_from("<HH", fonts[1], 32)
+        print(f"idx1 medium 16x16 {n0m}+{n1m} {len(fonts[1])} bytes")
+        kiwi16 = kiwi_ondisk(KIWI_BIN.read_bytes())
+        n0, n1 = struct.unpack_from("<HH", kiwi16, 32)
+        print(f"new 16x16 {n0}+{n1} {len(kiwi16)} bytes")
+        fonts[0] = kiwi16
+        # Dialogue balloons use idx1; n1 must cover rare CJK (抖=1439, 颤=1512)
+        # or they fall back to あ. Truncating to 5 VRAM pages caused that.
+        fonts[1] = kiwi16
+        n0m, n1m = struct.unpack_from("<HH", fonts[1], 32)
+        print(f"new idx1 medium 16x16 {n0m}+{n1m} {len(fonts[1])} bytes")
         kiwi12 = kiwi_ondisk(KIWI12_BIN.read_bytes())
         n0_12, n1_12 = struct.unpack_from("<HH", kiwi12, 32)
         print(f"new 12x12 {n0_12}+{n1_12} {len(kiwi12)} bytes")
@@ -329,7 +343,10 @@ def main() -> None:
             set_hash_all(elf, font_slots, lba, packed)
             print(f"font pack relocated LBA {old_lba} -> {lba} ({packed} bytes)")
 
-        index = list(csv.DictReader(MES_INDEX.open(encoding="utf-8", newline="")))
+        if fonts_only:
+            index = []
+        else:
+            index = list(csv.DictReader(MES_INDEX.open(encoding="utf-8", newline="")))
         n_ok = n_fail = n_grow = 0
         for row in index:
             lba = int(row["lba"])
@@ -358,7 +375,8 @@ def main() -> None:
                 set_hash_all(elf, mes_slots, new_lba, packed)
                 n_grow += 1
             n_ok += 1
-        print(f"mes patched {n_ok} fail {n_fail} relocated {n_grow}")
+        if not fonts_only:
+            print(f"mes patched {n_ok} fail {n_fail} relocated {n_grow}")
 
         fp.seek(ELF_LBA * SECTOR)
         fp.write(elf)

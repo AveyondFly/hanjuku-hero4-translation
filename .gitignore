@@ -10,7 +10,9 @@ venv/
 # Extracted binaries and regenerable dumps.
 # Keep the catalog, glossary, zh CSVs, and indexes — those are the source of record.
 extracted/*
-!extracted/translation_catalog.csv
+!extracted/catalog/
+!extracted/catalog/*.csv
+!extracted/catalog/*.txt
 !extracted/GLOSSARY.txt
 !extracted/RESOURCE_MAP.txt
 !extracted/mes_file_index.csv

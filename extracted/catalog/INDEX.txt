@@ -1,0 +1,43 @@
+半熟英雄4 译文分表
+================
+
+目录：extracted/catalog/
+列：id, jp, zh, notes, kind
+查询：python3 tools/catalog_query.py get|prefix|search|set|stats
+灌盘读整个目录；改某一章只改对应 csv。
+将军名 id 为 gen_zeus，兴趣为 gen_zeus#hobby。
+
+文件	行数	说明
+ch01_sun.csv	793	第一章 阿尔玛之月（日曜）
+ch02_mon.csv	474	第二章 浪漫（月曜）
+ch03_tue.csv	581	第三章 重装（火曜）
+ch04_wed.csv	583	第四章 宝瓶（水曜）
+ch05_thu.csv	613	第五章 榆木（木曜）
+ch06_fri.csv	639	第六章 我思故我在（金曜）
+ch07_gho.csv	752	第七章 幽灵／鲸／奥拉利乌姆
+ch08_ear.csv	429	第八章 地球
+event_solo.csv	1167	个人事件
+event_calendar.csv	383	月次／日历事件
+event_other.csv	1556	开场、竞技场、通话、结束等
+ui_sys.csv	888	系统文案 sysmes／存储卡
+ui_menu.csv	820	菜单
+dic.csv	3882	图鉴
+egg_du.csv	1223	蛋怪对白 eg_du
+egg_bo.csv	719	蛋怪对白 eg_bo
+egg_we.csv	611	蛋怪对白 eg_we
+egg_pk.csv	596	蛋怪对白 eg_pk
+egg_ev.csv	595	蛋怪对白 eg_ev
+egg_cl.csv	563	蛋怪对白 eg_cl
+egg_pw.csv	562	蛋怪对白 eg_pw
+egg_ms.csv	552	蛋怪对白 eg_ms
+egg_cv.csv	549	蛋怪对白 eg_cv
+egg_le.csv	445	蛋怪对白 eg_le
+egg_other.csv	253	蛋怪对白 其余
+dungeon.csv	2022	迷宫主文案 d_dung
+dungeon_other.csv	1117	迷宫系统／教程／蛋迷宫
+battle.csv	802	战斗：王牌／头目／奥之手／杂兵
+generals.csv	1162	将军卡片名／兴趣
+debug.csv	299	调试／测试
+other.csv	0	未归类
+合计	25630
+

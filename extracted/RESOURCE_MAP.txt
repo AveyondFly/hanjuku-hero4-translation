@@ -35,22 +35,21 @@ VFS 哈希表（ELF VA 0x432C48，12 字节/槽）
 
 KIWI 字库
 - 运行时 6 套（RAM 里 magic "KIWI" version 17）
-  16x16 4bpp  192+1727  主字库（对话/菜单，style 1）
-  16x16 4bpp  192+837   中等
-  16x16 4bpp  192+349   子集（字形号正好覆盖 mes 用到的 192–540）
-  12x12 4bpp  192+123/124  小字
+  16x16 4bpp  192+1727  主字库（对话/菜单，idx0；汉化灌 n1=2760）
+  16x16 4bpp  192+837   中等（idx1，对话气泡也走这套；汉化灌 n1=2760，与 idx0 同一份）
+  16x16 4bpp  192+349   子集 idx5（字形号正好覆盖 mes 用到的 192–540；仍日文）
+  12x12 4bpp  192+123/124  小字（idx2/3；汉化灌 n1=2760）
   16x16 8bpp  90        彩色/特殊
 - 头 64 字节：+8/+10 宽高，+12 色深相关，+32/+34 两档字形数
   +64 调色板，+68/+72 两档 4bpp 点阵，+76/+80 每字 2 字节度量
 - 1 字节码 0–191 = bank0（假名已核对：0=あ … 90=ア）
 - 2 字节码 +192 = bank1
 - 图集 PNG：extracted/font/kiwi_atlas/
-- 工具：tools/kiwi_font.py（从 eeMemory.bin 导出）
+- 工具：tools/kiwi_font.py（从 eeMemory.bin 导出图集；build_kiwi_font.py 也用它的头解析）
 
 LBA 580061 一带的 TIM2（256x128）
 - 已解压为 extracted/font/tim2_png/（33 张）
 - 内容是行星地图/地形，不是字库
-- 解析：tools/tim2.py
 
 已确认可读的日文（抽样）
 - 标题：はじめから / つづきから / とちゅうから / オプション / はやくして
@@ -66,10 +65,10 @@ LBA 580061 一带的 TIM2（256x128）
 - セーブに失敗しました / 部隊のくわしい情報です
 
 汉字对照（mes_codec.SPECIAL）
-- 假名 0–179 另表；SPECIAL 277 个码。catalog 24468 条 jp 已无 {编号} 占位
+- 假名 0–179 另表；SPECIAL 277 个码。catalog 分表合计约 25630 条 jp 已无 {编号} 占位
 - 同一编号会撞字（雄/込=469、装/領、開/戻/貢、始/言）。复合词/活用优先；汉化时重占槽
 - 图集序号 ≠ 文案码。对照：tools/mes_codec.py；重解：python3 tools/redecode_mes.py（会保留已填 zh）
-- 中文：extracted/translation_catalog.csv 的 zh 列（python3 tools/apply_zh.py 规范化）
+- 中文：extracted/catalog/*.csv 的 zh 列（python3 tools/apply_zh.py 规范化）
 - 专名：extracted/GLOSSARY.txt
 - 姓名输入 A–Z 与汉字共槽（N=488 O=305 无汉字可读，已标拉丁）：
   A知 B死 C体 D複 E少 F教 G早 H能 I惑 J分 K守 L小 M中
@@ -81,15 +80,15 @@ LBA 580061 一带的 TIM2（256x128）
 - extracted/mes/*.bin                43 个光盘 mes + RAM 副本
 - extracted/text/*.txt               按文件解码文本
 - extracted/text/ALL_DECODED.txt     合并全文
-- extracted/translation_catalog.csv  约 24468 条（id, jp, zh, notes, kind）
+- extracted/catalog/*.csv            按章／归属拆开的译文（id, jp, zh, notes, kind）
 - extracted/mes_file_index.csv       mes 文件 LBA/大小/key 样例
 - extracted/font/kiwi_atlas/         KIWI 字形图集（bank0 假名/数字已核对）
 - extracted/font/tim2_png/           解压后的 TIM2
-- tools/mes_codec.py / extract_mes.py / redecode_mes.py / lzss.py / tim2.py / kiwi_font.py / mips_disasm.py
+- tools/mes_codec.py / extract_mes.py / redecode_mes.py / lzss.py / kiwi_font.py / zh_csv.py / catalog_query.py / patch_iso.py / patch_generals.py
 
 汉化下一步
 1. 继续填 zh（剧情 ev_/f_、蛋怪图鉴 eg_、迷宫 d_）。日文汉字不能直接当中文用
 2. 扩 KIWI 16x16 4bpp 字库，中文新表重编码 mes + LZSS 写回 ISO
-3. 角色显示名（ゼウス等）在 EGG，不在 mes
+3. 角色显示名在 LBA 362 将军表（不是 EGG 模型）；灌盘：python3 tools/patch_generals.py
 4. 系统英文（NODATA / DUALSHOCK2 / HOT / OK / DEFCON）不要沿用日文汉字槽的字形
 5. 秘密蛋合言葉保持日文原文，方便对照攻略

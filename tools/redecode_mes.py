@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mes_codec import SPECIAL, decode_string, walk_trie  # noqa: E402
-from zh_csv import CATALOG, classify, load_rows, save_rows  # noqa: E402
+from zh_csv import CATALOG_DIR, classify, load_rows, preserve_extra_rows, save_rows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 MES = ROOT / "extracted" / "mes"
@@ -46,14 +46,14 @@ def main() -> None:
             lines.append("")
         (TEXT / f"{tag}.txt").write_text("\n".join(lines), encoding="utf-8")
 
+    old_rows = load_rows()
     old_zh: dict[str, str] = {}
     old_kind: dict[str, str] = {}
-    if CATALOG.exists():
-        for row in load_rows():
-            if (row.get("zh") or "").strip():
-                old_zh[row["id"]] = row["zh"]
-            if row.get("kind"):
-                old_kind[row["id"]] = row["kind"]
+    for row in old_rows:
+        if (row.get("zh") or "").strip():
+            old_zh[row["id"]] = row["zh"]
+        if row.get("kind"):
+            old_kind[row["id"]] = row["kind"]
 
     out_rows = [
         {
@@ -65,8 +65,9 @@ def main() -> None:
         }
         for sid, jp, tag in catalog
     ]
+    out_rows = preserve_extra_rows(old_rows, out_rows)
     save_rows(out_rows)
-    print(f"preserved zh {len(old_zh)} -> {CATALOG}")
+    print(f"preserved zh {len(old_zh)} -> {CATALOG_DIR}")
 
     with (TEXT / "ALL_DECODED.txt").open("w", encoding="utf-8") as f:
         cur = None

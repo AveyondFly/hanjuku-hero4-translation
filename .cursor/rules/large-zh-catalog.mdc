@@ -1,0 +1,21 @@
+---
+description: Never Grep the catalog directory; use catalog_query.py
+alwaysApply: true
+---
+
+# zh catalog sheets
+
+Translations are `extracted/catalog/*.csv` (no combined translation_catalog.csv).
+Do not Grep or StrReplace that directory. Do not Read dic/dungeon/egg/generals
+or other large sheets. Chapter `ch01_sun.csv`…`ch08_ear.csv` and `INDEX.txt`
+may be Read one at a time.
+
+```
+python3 tools/catalog_query.py get <id>
+python3 tools/catalog_query.py prefix <id-prefix>
+python3 tools/catalog_query.py search --sheet ch01_sun --zh <substr>
+python3 tools/catalog_query.py set <id> --zh '译文'
+```
+
+Follow `.cursor/skills/read-zh-catalog/SKILL.md`. Also do not Read `*.iso`,
+`eeMemory.bin`, or full PCSX2 PNG screenshots.

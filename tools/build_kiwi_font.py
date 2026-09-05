@@ -3,7 +3,7 @@
 
 Bank0 (0–191) is copied from the original RAM dump so kana / digits /
 合言葉 keep working. Bank1 (192+) is every remaining unique character
-in translation_catalog.csv zh, rasterized at the native glyph size.
+in extracted/catalog/*.csv zh, rasterized at the native glyph size.
 
 Writes:
   extracted/zh_cmap.csv
@@ -23,9 +23,9 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kiwi_font import bytes_per_glyph, decode_glyph, parse_header  # noqa: E402
 from mes_codec import HIRA, hira_to_kata  # noqa: E402
+from zh_csv import load_rows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-CSV = ROOT / "extracted/translation_catalog.csv"
 RAM = ROOT / "extracted/ram/eeMemory.bin"
 OUT = ROOT / "extracted/font/zh"
 CMAP_PATH = ROOT / "extracted/zh_cmap.csv"
@@ -85,10 +85,9 @@ def bank0_char_map() -> dict[str, int]:
 
 def collect_zh_chars() -> list[str]:
     seen: dict[str, int] = {}
-    with CSV.open(encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            for ch in row.get("zh") or "":
-                seen[ch] = seen.get(ch, 0) + 1
+    for row in load_rows():
+        for ch in row.get("zh") or "":
+            seen[ch] = seen.get(ch, 0) + 1
     return sorted(seen, key=lambda c: (-seen[c], c))
 
 

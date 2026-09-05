@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Normalize the jp+zh CSVs. Does not touch the ISO.
 
-Source of truth is extracted/translation_catalog.csv (id, jp, zh, notes, kind).
+Source of truth is extracted/catalog/*.csv (id, jp, zh, notes, kind).
 This script only:
   - fills kind
   - copies jp → zh for keep / empty-zh copy rows
   - writes zh_keep.csv and zh_alphabet.csv as filtered views of the same rows
 
-Does not read leftover Python string packs. Edit translation_catalog.csv (jp / zh columns).
-zh_keep.csv is a filtered view (always zh = jp). zh_alphabet.csv overlays
-the catalog if you edit the name-entry grid there.
+Edit the chapter / belonging csv under extracted/catalog/. zh_keep.csv is a
+filtered view (always zh = jp). zh_alphabet.csv overlays the catalog if you
+edit the name-entry grid there.
 """
 from __future__ import annotations
 
@@ -21,12 +21,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from zh_csv import (  # noqa: E402
     ALPHABET_CSV,
-    CATALOG,
+    CATALOG_DIR,
     KEEP_CSV,
     classify,
     load_rows,
     save_rows,
 )
+
 
 def merge_sheet(master: dict[str, dict[str, str]], path: Path) -> int:
     """Overlay zh (and notes) from a special sheet onto matching catalog ids."""
@@ -81,7 +82,7 @@ def main() -> None:
         f"sheet_merge {n_sheet}"
     )
     print("kinds", dict(kinds))
-    print("wrote", CATALOG)
+    print("wrote", CATALOG_DIR)
     print("wrote", KEEP_CSV)
     print("wrote", ALPHABET_CSV)
 

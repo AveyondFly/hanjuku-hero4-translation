@@ -84,11 +84,21 @@ LBA 580061 一带的 TIM2（256x128）
 - extracted/mes_file_index.csv       mes 文件 LBA/大小/key 样例
 - extracted/font/kiwi_atlas/         KIWI 字形图集（bank0 假名/数字已核对）
 - extracted/font/tim2_png/           解压后的 TIM2
-- tools/mes_codec.py / extract_mes.py / redecode_mes.py / lzss.py / kiwi_font.py / zh_csv.py / catalog_query.py / patch_iso.py / patch_generals.py
+- tools/mes_codec.py / extract_mes.py / redecode_mes.py / lzss.py / kiwi_font.py / zh_csv.py / catalog_query.py / rebuild.py / patch_iso.py / patch_generals.py
 
 汉化下一步
 1. 继续填 zh（剧情 ev_/f_、蛋怪图鉴 eg_、迷宫 d_）。日文汉字不能直接当中文用
 2. 扩 KIWI 16x16 4bpp 字库，中文新表重编码 mes + LZSS 写回 ISO
-3. 角色显示名在 LBA 362 将军表（不是 EGG 模型）；灌盘：python3 tools/patch_generals.py
+3. 角色显示名
+   - 将军卡片：LBA 362 的 100 字节表（`python3 tools/patch_generals.py`）
+   - 开局默认将军名：ELF VA `0x41B1A0` 步长 0x80（`inst_elf_cocott` 可可特等，随 `patch_iso.py` 重编码）
+   - 英雄／顾问和王国名在 VFS 槽 0 的加密子文件里，译文在 `extracted/catalog/instance.csv`
+     （`inst_hero_seva`、`inst_planet_sun`）。`patch_iso.py` 解密后按 catalog zh 重编码。
+     子文件 5：7×84 字节英雄表，包装名在 +24。
+     子文件 9：518×42 字节据点表，王国标题在 +12（假名＋旧「星」码 `9497`）。
+     不要挂钩 PrintMes（`0x2DB990`）——jal 会死循环，j 进 libcdvd `.data` 洞穴（`0x42E120`）
+     会 TLB miss / 跳到未对齐 PC。
+   - 王国名旧后缀 2 字节「星」被 ×48 解码器读成「啊」，汉化时去掉该后缀。
+   - HUD「ポッキリ」按贴图处理，暂不汉化；ELF 里只有调试句被改成「波奇利」
 4. 系统英文（NODATA / DUALSHOCK2 / HOT / OK / DEFCON）不要沿用日文汉字槽的字形
 5. 秘密蛋合言葉保持日文原文，方便对照攻略

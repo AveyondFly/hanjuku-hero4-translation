@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """Patch the Hanjuku Hero 4 ISO: ELF 2-byte font decoder, 16x16 + 12x12 KIWI,
-and recoded mes strings.
+recode mes, and recode VFS slot 0 hero/kingdom instance names.
 
 Font pack slot 49: indices 0–1 (16x16 main + medium) and 2–3 (12x12)
 are replaced with the full Chinese cmap (n1=2760). Index 4 (8bpp)
 and 5 (16x16 subset) stay stock.
+
+Flags: --fonts-only, --slot0-names-only, --allow-pcsx2
 """
 from __future__ import annotations
 
 import csv
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from lzss import lzss_compress, lzss_decompress  # noqa: E402
 from mes_codec import (  # noqa: E402
+    HIRA,
+    MissingGlyphs,
     decode_font_codes,
     encode_merged,
     encode_token,
@@ -23,7 +28,15 @@ from mes_codec import (  # noqa: E402
     pack_trie,
     walk_trie,
 )
-from zh_csv import keep_raw, kinds_by_id, load_cmap, zh_by_id  # noqa: E402
+from zh_csv import (  # noqa: E402
+    classify,
+    keep_raw,
+    kinds_by_id,
+    load_cmap,
+    load_rows,
+    missing_cmap_chars,
+    zh_by_id,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 ISO = ROOT / "半熟英雄4-7人的半熟英雄.iso"
@@ -112,6 +125,18 @@ def decrypt_sub(blob: bytes, ent: dict) -> bytes:
     return bytes(data)
 
 
+def encrypt_sub(plain: bytes, ent: dict) -> bytes:
+    """Inverse of decrypt_sub on a extracted subfile (not the parent blob)."""
+    data = bytearray(plain)
+    n = min(ent["n"], ent["size"], len(data))
+    t1, key = ent["t1"], ent["key"]
+    if t1 == 0 and key == 0:
+        return bytes(data)
+    for i in range(n):
+        data[i] = ((data[i] + t1) ^ key) & 0xFF
+    return bytes(data)
+
+
 def make_dir_entry(off: int, size: int) -> bytes:
     if off & 7:
         raise ValueError("offset not 8-aligned")
@@ -185,6 +210,8 @@ def rebuild_mes_file(
             if zh.strip() and not keep_raw(sid, kinds.get(sid, "")):
                 try:
                     new_strs.append(encode_merged(raw, zh, cmap, mul48=True))
+                except MissingGlyphs:
+                    raise
                 except ValueError:
                     new_strs.append(transcode_raw(raw))
             else:
@@ -204,6 +231,474 @@ def patch_decoder(elf: bytearray) -> None:
         return
     elf[off : off + DECODER_LEN] = DECODER_NEW
     print(f"patched decoder at ELF+{off:#x} ({DECODER_LEN} bytes, nop 35-mult + alu*48)")
+
+
+def _encode_zh(cmap: dict[str, int], text: str) -> bytes:
+    toks = []
+    for ch in text:
+        g = cmap.get(ch)
+        if g is None:
+            raise SystemExit(f"embedded name {text!r}: {ch!r} not in cmap")
+        toks.append(g)
+    return encode_tokens(toks, mul48=True)
+
+
+def _replace_field(elf: bytearray, old: bytes, new: bytes, *, label: str) -> int:
+    """Replace NUL-terminated `old` with `new` where the field has room."""
+    n = 0
+    start = 0
+    while True:
+        i = elf.find(old, start)
+        if i < 0:
+            break
+        # Field is old + trailing NULs up to the next nonzero (cap 24).
+        j = i + len(old)
+        while j < len(elf) and elf[j] == 0 and j - i < 24:
+            j += 1
+        room = j - i
+        if len(new) >= room:
+            print(f"skip {label} at ELF+{i:#x}: need {len(new)}+NUL, room {room}")
+            start = i + 1
+            continue
+        elf[i : i + len(new)] = new
+        elf[i + len(new) : i + room] = b"\x00" * (room - len(new))
+        n += 1
+        start = i + room
+    print(f"embedded {label}: {n}")
+    return n
+
+
+# Same wrappers as the generals name table / mes PrintMes.
+NAME_PREFIX = ("C", 10, 91)
+NAME_SUFFIX = ("C", 2, None)
+
+# PrintMes entry (a2 = font-coded string). Do not hook this: a code cave in
+# libcdvd .data at 0x42E120 hangs (jal) or crashes PCSX2 (j → TLB 0x10 /
+# unaligned PC 0x3c088889). Encodings below are still used if we recode
+# instance RAM at spawn.
+DECODER_FN_VA = 0x2DB990
+NAME_REMAP_VA = 0x42E120
+NAME_REMAP_TABLE_OFF = 0x180
+NAME_REMAP_ENTRY = 36
+# Old 2-byte 「星」 (glyph 195) as written by the stock encoder; the
+# patched ×48 decoder reads it as 啊 (289).
+KINGDOM_STAR_OLD = bytes.fromhex("9497")
+# 宝瓶首都节点 is 「アクエリアスの初」, not 「…星」. Tail is の初 in stock encoding.
+KINGDOM_INIT_OLD = bytes.fromhex("350cfa")
+# Wipe enough of the unused PrintMes remap cave (table is no longer written).
+NAME_REMAP_MAX_PAIRS = 16
+
+# ELF default general names: id → stock JP encoding (zh comes from instance.csv).
+ELF_NAME_NEEDLES = (
+    ("inst_elf_cocott", bytes.fromhex("696919fa")),
+    ("inst_elf_alfalfa", bytes.fromhex("6d0561d70561d7")),
+)
+
+
+def patch_embedded_names(elf: bytearray, cmap: dict[str, int]) -> None:
+    """Recode ELF default unit names and debug ポッキリ strings.
+
+    Default generals sit at file 0x20c1a0 (VA 0x41B1A0), stride 0x80.
+    Weekday-hero / planet titles are in VFS slot 0 (instance.csv), not here.
+    """
+    by_id = {r["id"]: r for r in load_rows()}
+    for sid, old in ELF_NAME_NEEDLES:
+        row = by_id.get(sid) or {}
+        zh = (row.get("zh") or "").strip()
+        jp = (row.get("jp") or "").strip() or sid
+        if not zh or zh == jp:
+            print(f"embedded {sid}: skip (no zh)")
+            continue
+        _replace_field(elf, old, _encode_zh(cmap, zh), label=f"{jp}→{zh}")
+
+    pok_raw = bytes.fromhex("9d1915db")
+    pok_zh = _encode_zh(cmap, "波奇利")
+    n_pok = 0
+    start = 0
+    while True:
+        i = elf.find(pok_raw, start)
+        if i < 0:
+            break
+        wrapped = i >= 2 and bytes(elf[i - 2 : i]) == bytes.fromhex("48a3")
+        if wrapped:
+            new = (
+                encode_tokens([NAME_PREFIX], mul48=True)
+                + pok_zh
+                + encode_token(NAME_SUFFIX, mul48=True)
+            )
+            field = i - 2
+        else:
+            new = pok_zh
+            field = i
+        orig_end = i + len(pok_raw)
+        while orig_end < len(elf) and elf[orig_end] != 0:
+            orig_end += 1
+        room = orig_end - field + 1
+        if len(new) < room:
+            elf[field : field + len(new)] = new
+            elf[field + len(new) : field + room] = b"\x00" * (room - len(new))
+            n_pok += 1
+            start = field + room
+        else:
+            print(f"skip ポッキリ at ELF+{i:#x}: need {len(new)}+NUL, room {room}")
+            start = i + 1
+    print(f"embedded ポッキリ→波奇利: {n_pok}")
+
+
+def _kana_glyph(ch: str) -> int:
+    if ch == "ー":
+        return 85
+    if ch in "ッっ":
+        return 87
+    o = ord(ch)
+    if 0x30A1 <= o <= 0x30F6:
+        hira = chr(o - 0x60)
+        for i, h in enumerate(HIRA):
+            if h == hira:
+                return 90 + i
+        raise ValueError(f"no kana glyph for {ch!r}")
+    raise ValueError(f"not katakana: {ch!r}")
+
+
+def _leading_katakana(s: str) -> str:
+    out: list[str] = []
+    for ch in s:
+        o = ord(ch)
+        if ch == "ー" or ch in "ッっ" or 0x30A1 <= o <= 0x30F6:
+            out.append(ch)
+        else:
+            break
+    return "".join(out)
+
+
+def _hud_name_entries(cmap: dict[str, int]) -> list[tuple[bytes, bytes]]:
+    """Build (old, new) encodings from instance.csv; zh is never hardcoded."""
+    out: list[tuple[bytes, bytes]] = []
+    n_named = 0
+    for row in load_rows():
+        sid = row.get("id") or ""
+        if not sid.startswith("inst_"):
+            continue
+        kind = row.get("kind") or classify(sid, row.get("jp") or "")
+        if kind not in ("hero", "planet", "planet_init"):
+            continue
+        jp = (row.get("jp") or "").strip()
+        zh = (row.get("zh") or "").strip()
+        if not jp:
+            raise SystemExit(f"{sid}: empty jp")
+        if not zh or zh == jp:
+            print(f"instance {sid}: skip (no zh)")
+            continue
+        n_named += 1
+        if kind == "hero":
+            glyphs = [_kana_glyph(ch) for ch in jp]
+            old = encode_tokens([NAME_PREFIX, *glyphs, NAME_SUFFIX], mul48=True)
+            new = encode_tokens(
+                [NAME_PREFIX, *[_zh_glyph(cmap, ch) for ch in zh], NAME_SUFFIX],
+                mul48=True,
+            )
+        elif kind == "planet_init":
+            kana = _leading_katakana(jp)
+            if not kana:
+                raise SystemExit(f"{sid}: jp has no leading katakana")
+            old = encode_tokens([_kana_glyph(ch) for ch in kana], mul48=True) + KINGDOM_INIT_OLD
+            new = encode_tokens([_zh_glyph(cmap, ch) for ch in zh], mul48=True)
+        else:
+            glyphs = [_kana_glyph(ch) for ch in jp]
+            old = encode_tokens(glyphs, mul48=True) + KINGDOM_STAR_OLD
+            new = encode_tokens([_zh_glyph(cmap, ch) for ch in zh], mul48=True)
+        if not old or not new or len(old) > 32 or len(new) > 32:
+            raise SystemExit(f"{sid} {jp}->{zh}: old={len(old)} new={len(new)}")
+        out.append((old, new))
+    if n_named == 0:
+        raise SystemExit("instance.csv has no inst_hero_/inst_planet_ zh")
+    out.sort(key=lambda p: len(p[0]), reverse=True)
+    return out
+
+
+def _zh_glyph(cmap: dict[str, int], ch: str) -> int:
+    g = cmap.get(ch)
+    if g is None:
+        raise SystemExit(f"HUD name {ch!r} not in cmap")
+    return g
+
+
+def _i_ins(op: int, rs: int, rt: int, imm: int) -> int:
+    return (op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF)
+
+
+def _r_ins(fn: int, rd: int, rs: int, rt: int, sa: int = 0) -> int:
+    return (rs << 21) | (rt << 16) | (rd << 11) | (sa << 6) | fn
+
+
+def _j_ins(target: int) -> int:
+    return (2 << 26) | ((target >> 2) & 0x3FFFFFF)
+
+
+def _assemble_remap(base_va: int, table_va: int, n_entries: int) -> bytes:
+    """MIPS: rewrite a2's font string if it matches a HUD name table entry.
+
+    Replaces PrintMes's first instruction (addiu sp,-64). Must be entered with
+    `j`, never `jal`: PrintMes saves ra at +0x14, so jal would make every
+    PrintMes return to itself and hang before the title can finish.
+
+    Delay slot of the hook already copied a1→t0; t0 is restored, then `j`
+    back to PrintMes+8. Match at offset 0 and +4 (kingdom names after 18011801).
+    """
+    z, v0, v1 = 0, 2, 3
+    a1, a2 = 5, 6
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9 = 8, 9, 10, 11, 12, 13, 14, 15, 24, 25
+    sp = 29
+    ADDIU, BEQ, BNE, LUI, LBU, SB = 9, 4, 5, 15, 0x24, 0x28
+    ADDU, SUBU, OR, SLTI, DADDU = 0x21, 0x23, 0x25, 0x0A, 0x2D
+    ret_va = DECODER_FN_VA + 8
+
+    lo = table_va & 0xFFFF
+    hi = ((table_va + 0x8000) >> 16) & 0xFFFF
+    ops: list = [
+        ("addiu", sp, sp, -64),
+        ("beq", a2, z, "exit"),
+        ("nop",),
+        ("lui", t1, hi),
+        ("addiu", t1, t1, lo),
+        ("addiu", t9, z, n_entries),
+        ("label", "next_entry"),
+        ("beq", t9, z, "exit"),
+        ("nop",),
+        ("lbu", t2, t1, 0),
+        ("lbu", t3, t1, 1),
+        ("addiu", t4, t1, 4),
+        ("addiu", t5, z, 0),
+        ("label", "try_off"),
+        ("addu", t6, a2, t5),
+        ("or", t7, t2, t2),
+        ("or", t8, t6, t6),
+        ("or", v1, t4, t4),
+        ("label", "cmp"),
+        ("beq", t7, z, "matched"),
+        ("nop",),
+        ("lbu", v0, t8, 0),
+        ("lbu", t0, v1, 0),
+        ("bne", v0, t0, "next_off"),
+        ("addiu", t8, t8, 1),
+        ("addiu", v1, v1, 1),
+        ("addiu", t7, t7, -1),
+        ("beq", z, z, "cmp"),
+        ("nop",),
+        ("label", "next_off"),
+        ("bne", t5, z, "advance"),
+        ("nop",),
+        ("addiu", t5, z, 4),
+        ("beq", z, z, "try_off"),
+        ("nop",),
+        ("label", "advance"),
+        ("addiu", t1, t1, NAME_REMAP_ENTRY),
+        ("addiu", t9, t9, -1),
+        ("beq", z, z, "next_entry"),
+        ("nop",),
+        ("label", "matched"),
+        ("addu", t6, a2, t5),
+        ("addiu", t8, t1, 20),
+        ("or", t7, t3, t3),
+        ("label", "cpy"),
+        ("beq", t7, z, "zfill"),
+        ("nop",),
+        ("lbu", v0, t8, 0),
+        ("addiu", t8, t8, 1),
+        ("sb", v0, t6, 0),
+        ("addiu", t6, t6, 1),
+        ("addiu", t7, t7, -1),
+        ("beq", z, z, "cpy"),
+        ("nop",),
+        ("label", "zfill"),
+        ("subu", t7, t2, t3),
+        ("slti", t0, t7, 1),
+        ("bne", t0, z, "exit"),
+        ("nop",),
+        ("label", "zf"),
+        ("sb", z, t6, 0),
+        ("addiu", t6, t6, 1),
+        ("addiu", t7, t7, -1),
+        ("bne", t7, z, "zf"),
+        ("nop",),
+        ("label", "exit"),
+        ("daddu", t0, a1, z),
+        ("j", ret_va),
+        ("nop",),
+    ]
+
+    labels: dict[str, int] = {}
+    words: list[object] = []
+    for op in ops:
+        if op[0] == "label":
+            labels[op[1]] = len(words)
+            continue
+        words.append(op)
+
+    def rel(idx: int, lab: str) -> int:
+        tgt = labels[lab]
+        return tgt - (idx + 1)
+
+    out = bytearray()
+    for i, op in enumerate(words):
+        k = op[0]
+        pc = base_va + i * 4
+        if k == "nop":
+            w = 0
+        elif k == "addiu":
+            w = _i_ins(ADDIU, op[2], op[1], op[3])
+        elif k == "lui":
+            w = _i_ins(LUI, 0, op[1], op[2])
+        elif k == "lbu":
+            w = _i_ins(LBU, op[2], op[1], op[3])
+        elif k == "sb":
+            w = _i_ins(SB, op[2], op[1], op[3])
+        elif k == "beq":
+            w = _i_ins(BEQ, op[1], op[2], rel(i, op[3]))
+        elif k == "bne":
+            w = _i_ins(BNE, op[1], op[2], rel(i, op[3]))
+        elif k == "addu":
+            w = _r_ins(ADDU, op[1], op[2], op[3])
+        elif k == "subu":
+            w = _r_ins(SUBU, op[1], op[2], op[3])
+        elif k == "or":
+            w = _r_ins(OR, op[1], op[2], op[3])
+        elif k == "daddu":
+            w = _r_ins(DADDU, op[1], op[2], op[3])
+        elif k == "slti":
+            w = _i_ins(SLTI, op[2], op[1], op[3])
+        elif k == "j":
+            tgt = op[1]
+            if (tgt & 0xF0000000) != (pc & 0xF0000000):
+                raise SystemExit(f"j {tgt:#x} crosses 256MB from {pc:#x}")
+            w = _j_ins(tgt)
+        else:
+            raise SystemExit(f"unknown mips op {op}")
+        # sanity: beq/bne offset fits s16
+        if k in ("beq", "bne") and not -32768 <= rel(i, op[3]) <= 32767:
+            raise SystemExit(f"branch too far at {pc:#x}")
+        out += struct.pack("<I", w)
+        _ = pc
+    return bytes(out)
+
+
+def _pack_remap_table(entries: list[tuple[bytes, bytes]]) -> bytes:
+    blob = bytearray()
+    for old, new in entries:
+        rec = bytearray(NAME_REMAP_ENTRY)
+        rec[0] = len(old)
+        rec[1] = len(new)
+        rec[4 : 4 + len(old)] = old
+        rec[20 : 20 + len(new)] = new
+        blob += rec
+    return bytes(blob)
+
+
+def patch_hud_name_remap(elf: bytearray, cmap: dict[str, int]) -> None:
+    """Keep PrintMes unhooked. cmap is unused (call-site compatibility).
+
+    An earlier hook jumped from PrintMes into libcdvd .data at 0x42E120.
+    jal clobbered ra (hang). j reached the stub; PCSX2 then TLB-missed
+    loads from 0x10 (one per table entry) and died on an unaligned jump
+    to 0x3c088889. Live RAM pokes already proved the encodings; recode
+    names at instance init instead of PrintMes.
+    """
+    _ = cmap
+    stock = 0x27BDFFC0  # addiu sp,sp,-64
+    fn_off = fo(DECODER_FN_VA)
+    orig = struct.unpack_from("<I", elf, fn_off)[0]
+    hop_j = _j_ins(NAME_REMAP_VA)
+    hop_jal = (3 << 26) | ((NAME_REMAP_VA >> 2) & 0x3FFFFFF)
+    if orig not in (stock, hop_j, hop_jal):
+        raise SystemExit(f"PrintMes prologue unexpected {orig:#x}")
+    if orig != stock:
+        struct.pack_into("<I", elf, fn_off, stock)
+        print(f"removed PrintMes HUD hook ({orig:#x} -> addiu sp,-64)")
+    else:
+        print("PrintMes prologue stock (no HUD hook)")
+    cave_off = fo(NAME_REMAP_VA)
+    n = NAME_REMAP_TABLE_OFF + NAME_REMAP_MAX_PAIRS * NAME_REMAP_ENTRY
+    cave_head = struct.unpack_from("<I", elf, cave_off)[0]
+    if orig in (hop_j, hop_jal) or cave_head == stock:
+        elf[cave_off : cave_off + n] = b"\x00" * n
+        print(f"cleared name-remap cave {NAME_REMAP_VA:#x} ({n} bytes)")
+
+
+def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
+    """Overwrite NUL-padded `old` with `new` (needs one extra NUL of room)."""
+    n = 0
+    start = 0
+    while True:
+        i = buf.find(old, start)
+        if i < 0:
+            break
+        j = i + len(old)
+        while j < len(buf) and buf[j] == 0 and j - i < 32:
+            j += 1
+        room = j - i
+        if len(new) >= room:
+            start = i + 1
+            continue
+        buf[i : i + len(new)] = new
+        buf[i + len(new) : i + room] = b"\x00" * (room - len(new))
+        n += 1
+        start = i + room
+    return n
+
+
+# VFS slot 0 (LBA from hash[0]) is an F7-style directory. Subfiles used at
+# new-game init (0x236c48): 4 = 100-byte units, 5 = 7×84 weekday heroes
+# (name at +24), 9 = 518×42 map nodes (kingdom title at +12).
+SLOT0_DIR_INDEXES = (4, 5, 9)
+
+
+def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
+    """Recode weekday-hero and starting-planet names in VFS slot 0.
+
+    Those strings are XOR/t1-scrambled on disc, so a raw ISO search misses
+    them. The loader (0x362928) decrypts into RAM; HUD GetName (0x2365d8)
+    then reads hero[+24]. Do not hook PrintMes.
+    """
+    lba, packed, _unp = struct.unpack_from("<III", elf, fo(TABLE_VA))
+    if lba < 1 or packed < 64:
+        raise SystemExit(f"VFS slot 0 looks empty lba={lba} size={packed}")
+    blob = bytearray(iso_read(fp, lba, packed))
+    entries = _hud_name_entries(cmap)
+    total = 0
+    for idx in SLOT0_DIR_INDEXES:
+        ent = parse_dir_entry(bytes(blob[idx * 8 : idx * 8 + 8]))
+        if ent["off"] + ent["size"] > len(blob) or ent["size"] < 8:
+            print(f"slot0[{idx}] skip bad dir off={ent['off']} size={ent['size']}")
+            continue
+        plain = bytearray(decrypt_sub(blob, ent))
+        n = 0
+        for old, new in entries:
+            n += _replace_in_buf(plain, old, new)
+        if n == 0:
+            print(f"slot0[{idx}] no HUD names")
+            continue
+        enc = encrypt_sub(bytes(plain), ent)
+        fake = bytearray(ent["off"] + len(enc))
+        fake[ent["off"] : ent["off"] + len(enc)] = enc
+        if decrypt_sub(fake, ent) != bytes(plain):
+            raise SystemExit(f"slot0[{idx}] encrypt roundtrip failed")
+        blob[ent["off"] : ent["off"] + ent["size"]] = enc
+        total += n
+        print(f"slot0[{idx}] recoded {n} names (off={ent['off']} size={ent['size']})")
+    if total == 0:
+        already = 0
+        for idx in SLOT0_DIR_INDEXES:
+            ent = parse_dir_entry(bytes(blob[idx * 8 : idx * 8 + 8]))
+            if ent["off"] + ent["size"] > len(blob) or ent["size"] < 8:
+                continue
+            plain = decrypt_sub(blob, ent)
+            already += sum(plain.count(new) for _old, new in entries)
+        if already:
+            print(f"slot0 instance names already recoded ({already} zh hits); skip")
+            return
+        raise SystemExit("slot0 HUD names: nothing replaced (directory shifted?)")
+    iso_write(fp, lba, bytes(blob), packed)
+    print(f"slot0 instance names: {total} replacements, LBA {lba}")
 
 
 def set_hash(elf: bytearray, slot: int, lba: int, packed: int, unp: int) -> None:
@@ -270,8 +765,53 @@ def update_pvd_sectors(fp, nsectors: int) -> None:
     fp.write(struct.pack("<I", nsectors) + struct.pack(">I", nsectors))
 
 
+def pcsx2_pids() -> list[str]:
+    found: list[str] = []
+    for name in ("pcsx2-qt", "pcsx2", "PCSX2"):
+        r = subprocess.run(
+            ["pgrep", "-x", name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        found.extend(p for p in r.stdout.split() if p)
+    return sorted(set(found))
+
+
 def main() -> None:
     fonts_only = "--fonts-only" in sys.argv
+    slot0_only = "--slot0-names-only" in sys.argv
+    if fonts_only and slot0_only:
+        raise SystemExit("use only one of --fonts-only / --slot0-names-only")
+
+    pids = pcsx2_pids()
+    if pids and "--allow-pcsx2" not in sys.argv:
+        raise SystemExit(
+            "PCSX2 is running (pid "
+            + ", ".join(pids)
+            + "). Quit it fully, then re-run. "
+            "Override with --allow-pcsx2 if you really mean to write the ISO live."
+        )
+    if pids:
+        print("WARNING: PCSX2 running; writing ISO anyway (--allow-pcsx2)")
+
+    if slot0_only:
+        cmap = load_cmap()
+        missing = missing_cmap_chars(cmap=cmap)
+        if missing:
+            sample = "".join(list(missing)[:40])
+            raise SystemExit(
+                f"cmap missing {len(missing)} chars ({sample}…) — "
+                "run python3 tools/rebuild.py first"
+            )
+        elf = ELF_EXTRACTED.read_bytes()
+        with ISO.open("r+b") as fp:
+            if iso_read(fp, ELF_LBA, 4) != b"\x7fELF":
+                raise SystemExit("ELF LBA does not look like ELF")
+            patch_slot0_instance_names(fp, elf, cmap)
+        print("slot0-names-only done", ISO)
+        return
+
     if fonts_only:
         print("fonts-only: skip mes recode")
     else:
@@ -279,6 +819,13 @@ def main() -> None:
         catalog = zh_by_id()
         kinds = kinds_by_id()
         print(f"cmap {len(cmap)}  catalog zh {sum(1 for v in catalog.values() if v.strip())}")
+        missing = missing_cmap_chars(cmap=cmap)
+        if missing:
+            sample = "".join(list(missing)[:40])
+            raise SystemExit(
+                f"cmap missing {len(missing)} chars ({sample}…) — "
+                "run python3 tools/rebuild.py (or tools/build_kiwi_font.py first)"
+            )
 
         for g in list(range(0, 192, 17)) + [192, 250, 494, 1000, 192 + 2759]:
             raw = encode_token(g, mul48=True)
@@ -289,6 +836,9 @@ def main() -> None:
 
     elf = bytearray(ELF_EXTRACTED.read_bytes())
     patch_decoder(elf)
+    if not fonts_only:
+        patch_embedded_names(elf, cmap)
+        patch_hud_name_remap(elf, cmap)
 
     with ISO.open("r+b") as fp:
         disc_elf_head = iso_read(fp, ELF_LBA, 4)
@@ -377,6 +927,7 @@ def main() -> None:
             n_ok += 1
         if not fonts_only:
             print(f"mes patched {n_ok} fail {n_fail} relocated {n_grow}")
+            patch_slot0_instance_names(fp, elf, cmap)
 
         fp.seek(ELF_LBA * SECTOR)
         fp.write(elf)

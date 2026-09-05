@@ -39,6 +39,7 @@ Default lookup: `python3 tools/catalog_query.py` (limit 40, cap 200).
 | `dungeon.csv` / `dungeon_other.csv` | 迷宫 |
 | `battle.csv` | 王牌／头目／杂兵 |
 | `generals.csv` | 将军名 `gen_zeus`，兴趣 `gen_zeus#hobby` |
+| `instance.csv` | 槽 0 英雄／行星名 `inst_hero_seva` / `inst_planet_sun` |
 
 `catalog_query.py search --sheet ch01_sun` accepts stem or filename.
 
@@ -46,7 +47,7 @@ Default lookup: `python3 tools/catalog_query.py` (limit 40, cap 200).
 
 ```bash
 python3 tools/catalog_query.py stats
-python3 tools/catalog_query.py get ev_sun_st65#0 gen_zeus gen_zeus#hobby
+python3 tools/catalog_query.py get ev_sun_st65#0 gen_zeus inst_hero_seva inst_planet_sun
 python3 tools/catalog_query.py prefix ev_sun
 python3 tools/catalog_query.py search --sheet ch01_sun --zh 维纳斯
 python3 tools/catalog_query.py search --jp ガクガク
@@ -61,6 +62,7 @@ One- or two-line edits: `set`, not StrReplace. After `set`, `python3 tools/apply
 ## When Read is OK
 
 - `INDEX.txt`, `GLOSSARY.txt`, `RESOURCE_MAP.txt`
+- `instance.csv` (small)
 - One chapter sheet (`ch01_sun.csv` … `ch08_ear.csv`) for a contiguous scene
 
 Do **not** Read: `dic.csv`, `dungeon.csv`, `dungeon_other.csv`, `egg_*.csv`,
@@ -80,6 +82,6 @@ Do **not** Read: `dic.csv`, `dungeon.csv`, `dungeon_other.csv`, `egg_*.csv`,
 
 - Japanese kanji must not be reused as Chinese. Names follow `extracted/GLOSSARY.txt`.
 - `kind=keep` (kana tables / 合言葉): zh must equal jp. Empty jp stays empty zh.
-- Generals: `kind=name` / `kind=hobby`. After editing `generals.csv`, `python3 tools/patch_generals.py`.
-- New characters → `python3 tools/build_kiwi_font.py` before a font patch.
-- Prefer `python3 tools/patch_iso.py --fonts-only` or a single mes write. Do not rerun full `patch_iso.py` unless mes encoding must change.
+- Generals: `kind=name` / `kind=hobby`.
+- After catalog zh edits, default to `python3 tools/rebuild.py` (apply + missing-glyph font rebuild + patch ISO + generals). `rebuild.py --check` only reports cmap gaps.
+- Do not run `patch_iso.py` while skipping a font rebuild if zh has new characters; missing glyphs now abort. PCSX2 must be fully quit before writing the ISO.

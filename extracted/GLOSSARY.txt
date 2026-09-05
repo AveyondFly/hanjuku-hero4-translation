@@ -53,6 +53,11 @@
 - 译文在 `extracted/catalog/generals.csv`（名字 `gen_zeus`，兴趣 `gen_zeus#hobby`）。用 `python3 tools/patch_generals.py` 重编码写回。
 - 兴趣只译了表里有的（网球、骑马、武道、兴趣等），其余仍假名。
 
+情报板英雄／行星标题（非 mes）
+- 开局 memcpy 进实例的显示名在 VFS 槽 0 加密子文件里，译文在 `extracted/catalog/instance.csv`
+  （`inst_hero_seva`、`inst_planet_sun` 等）。`patch_iso.py` 按 kind（hero / planet / planet_init）重编码。
+- 改 zh 后 `python3 tools/rebuild.py`，或只灌名：`python3 tools/patch_iso.py --slot0-names-only`。
+
 星球
 - アルマムーン     阿尔玛之月
 - ロマンシング     浪漫（星·浪漫）

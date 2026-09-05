@@ -1,7 +1,7 @@
 """Load / save the jp+zh CSVs.
 
-Mes strings and general-card names live in extracted/catalog/*.csv
-(id, jp, zh, notes, kind), split by chapter and belonging.
+Mes strings, general-card names, and VFS instance names live in
+extracted/catalog/*.csv (id, jp, zh, notes, kind), split by belonging.
 The font mapping is a different schema, so it stays in extracted/zh_cmap.csv.
 """
 from __future__ import annotations
@@ -52,6 +52,7 @@ SHEETS: list[tuple[str, str]] = [
     ("dungeon_other.csv", "迷宫系统／教程／蛋迷宫"),
     ("battle.csv", "战斗：王牌／头目／奥之手／杂兵"),
     ("generals.csv", "将军卡片名／兴趣"),
+    ("instance.csv", "槽 0 英雄／行星名（非 mes）"),
     ("debug.csv", "调试／测试"),
     ("other.csv", "未归类"),
 ]
@@ -134,6 +135,14 @@ def id_matches(sid: str, prefixes: tuple[str, ...]) -> bool:
 
 
 def classify(sid: str, jp: str) -> str:
+    if sid.startswith("inst_hero_"):
+        return "hero"
+    if sid.startswith("inst_planet_") and sid.endswith("_init"):
+        return "planet_init"
+    if sid.startswith("inst_planet_"):
+        return "planet"
+    if sid.startswith("inst_elf_"):
+        return "elf"
     if sid.startswith("gen_"):
         if not (jp or "").strip():
             return "empty"
@@ -187,6 +196,8 @@ def _is_calendar(key: str) -> bool:
 def sheet_for_id(sid: str) -> str:
     """Return the catalog filename for this id."""
     key = sid.split("#", 1)[0]
+    if key.startswith("inst_"):
+        return "instance.csv"
     if key.startswith("gen_"):
         return "generals.csv"
     if key.startswith(("sysmes_", "memcard_", "pad_", "metamor_")):
@@ -293,6 +304,7 @@ def _write_index(counts: dict[str, int]) -> None:
         "查询：python3 tools/catalog_query.py get|prefix|search|set|stats",
         "灌盘读整个目录；改某一章只改对应 csv。",
         "将军名 id 为 gen_zeus，兴趣为 gen_zeus#hobby。",
+        "槽 0 英雄／行星名 id 为 inst_hero_seva / inst_planet_sun。",
         "",
         "文件\t行数\t说明",
     ]
@@ -344,7 +356,7 @@ def save_rows(rows: list[dict[str, str]], path: Path | None = None) -> None:
 def preserve_extra_rows(
     old: list[dict[str, str]], new: list[dict[str, str]]
 ) -> list[dict[str, str]]:
-    """Keep rows (e.g. generals) that a mes re-extract would otherwise drop."""
+    """Keep rows (e.g. generals, instance names) that a mes re-extract would otherwise drop."""
     seen = {r["id"] for r in new}
     extra = [r for r in old if r["id"] not in seen]
     return new + extra
@@ -425,6 +437,33 @@ def load_cmap(path: Path = CMAP_CSV) -> dict[str, int]:
             ch = row.get("char") or ""
             if ch:
                 out[ch] = int(row["glyph"])
+    return out
+
+
+# Spaces are not rasterized. Keep in sync with mes_codec.SKIP_GLYPH.
+SKIP_CMAP_CHARS = frozenset(" \t\n\r\u3000")
+
+
+def missing_cmap_chars(
+    rows: list[dict[str, str]] | None = None,
+    cmap: dict[str, int] | None = None,
+) -> dict[str, list[str]]:
+    """zh characters with no cmap id (would abort mes encode), plus sample ids."""
+    if rows is None:
+        rows = load_rows()
+    if cmap is None:
+        cmap = load_cmap() if CMAP_CSV.exists() else {}
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        sid = row.get("id") or ""
+        if keep_raw(sid, row.get("kind") or ""):
+            continue
+        for ch in row.get("zh") or "":
+            if ch in SKIP_CMAP_CHARS or ch in cmap:
+                continue
+            ids = out.setdefault(ch, [])
+            if len(ids) < 3 and sid not in ids:
+                ids.append(sid)
     return out
 
 

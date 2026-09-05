@@ -32,11 +32,10 @@ ISO9660 里几乎只有启动 ELF（`SLPM_658.39`，LBA **931018**）。游戏�
 ISO + ELF 哈希表
     → extract_mes.py          抽出 mes，写入 extracted/catalog/ 分表（保留 zh）
     → 编辑对应分表的 zh 列     或 catalog_query.py set
-    → apply_zh.py             填 kind，刷新 keep / alphabet 视图
-    → build_kiwi_font.py      按 zh 字符集出 cmap + KIWI 点阵
-    → patch_iso.py            读全部分表的 zh，改解码器、灌字库、重编码 mes
-    → patch_generals.py       只灌将军卡片名（LBA 362，不改 ELF）
+    → rebuild.py              一键：规范化 + 缺字补字库 + 灌 mes/字库/将军表
 ```
+
+分步脚本仍可单独跑（`apply_zh.py` / `build_kiwi_font.py` / `patch_iso.py` / `patch_generals.py`）。改完译文请用总入口，避免漏建字库时把缺字丢掉。
 
 路径相对仓库根（由脚本自己的位置推出来），不依赖当前工作目录。系统字体仍用发行版路径（Noto Sans CJK）。
 
@@ -143,6 +142,12 @@ python3 tools/patch_iso.py
 python3 tools/patch_iso.py --fonts-only
 ```
 
+只重编码开局情报板用的英雄／王国名（VFS 槽 0 加密子文件 4/5/9），不动 mes／字库：
+
+```
+python3 tools/patch_iso.py --slot0-names-only
+```
+
 将军卡片名（维纳斯 / 宙斯等）不在 mes 里，在 LBA 362 的 100 字节表。译文在 `generals.csv`，改完只跑：
 
 ```
@@ -168,16 +173,33 @@ python3 tools/patch_generals.py
    无 zh、或 KEEP_RAW（`sysmes_hiragana` / `sysmes_katakana` / `sysmes_dic_index_keyword` / `menu_secret_egg_word`）：只把旧 2 字节码转成新公式，字形号不变。  
    编码不能产出 NUL（mes 以 0 结尾）；`pack_trie` 必须保留原文件里的重复叶子。
 
+4. **VFS 槽 0 实例名**（英雄／顾问、开局行星标题）  
+   译文在 `extracted/catalog/instance.csv`（`inst_hero_*` / `inst_planet_*`），不要写进 Python。  
+   子文件 5 是 7×84 英雄表（名在 +24），子文件 9 是 518×42 据点表（标题在 +12）。  
+   盘上 XOR/t1 加密，按目录项解密后替换再写回。不要挂钩 PrintMes。
+
 同时写 `extracted/SLPM_658.39` 和 ISO 里那份 ELF。ELF 一改，PCSX2 存档目录按 CRC 分，旧档对不上。
 
 ## 改译文之后怎么重灌
 
-1. 改对应分表的 zh 列（或 `catalog_query.py set` / `zh_alphabet.csv`）
-2. `python3 tools/apply_zh.py`
-3. 若出现了 cmap 里没有的新字：`python3 tools/build_kiwi_font.py`
-4. 对白／菜单：`python3 tools/patch_iso.py`（只换字库则加 `--fonts-only`）
-5. 只改将军名：`python3 tools/patch_generals.py`
-6. 完全退出再开 PCSX2，不要读旧即时存档
+```
+python3 tools/rebuild.py
+```
+
+它会：规范化 catalog → 扫一遍 zh 对 cmap，缺字就重建 KIWI → 灌 ELF/字库/mes → 灌将军表。PCSX2 开着时拒绝写 ISO（`--allow-pcsx2` 可强行，不安全）。只检查缺字：
+
+```
+python3 tools/rebuild.py --check
+```
+
+完全退出再开 PCSX2，不要读旧即时存档。
+
+分步（一般不必）：
+
+1. `python3 tools/apply_zh.py`
+2. 缺字时 `python3 tools/build_kiwi_font.py`
+3. `python3 tools/patch_iso.py`（只换字库则 `--fonts-only`）
+4. 只改将军名：`python3 tools/patch_generals.py`
 
 ## 故意没改的
 
@@ -192,7 +214,7 @@ python3 tools/patch_generals.py
 
 | 路径 | 作用 |
 |---|---|
-| `extracted/catalog/` | 原文 + 汉化分表（含将军名）；`INDEX.txt` 是目录 |
+| `extracted/catalog/` | 原文 + 汉化分表（含将军名、槽 0 英雄／行星名）；`INDEX.txt` 是目录 |
 | `extracted/zh_keep.csv` | 必须保留日文的对照表 |
 | `extracted/zh_alphabet.csv` | 姓名输入格（字形共槽） |
 | `extracted/GLOSSARY.txt` | 专名 |
@@ -205,7 +227,8 @@ python3 tools/patch_generals.py
 | `tools/redecode_mes.py` | 改 SPECIAL 后重解 jp，保留 zh |
 | `tools/mes_codec.py` | 编解码、NUL 回避、trie |
 | `tools/lzss.py` | 游戏用 LZSS 解/压 |
-| `tools/patch_iso.py` | 解码器 + 字库 + mes 灌盘 |
+| `tools/rebuild.py` | 一键规范化 + 补字库 + 灌盘 |
+| `tools/patch_iso.py` | 解码器 + 字库 + mes + 槽 0 英雄／王国名灌盘 |
 | `tools/patch_generals.py` | 将军卡片名灌盘 |
 | `tools/build_kiwi_font.py` | 中文 KIWI |
 

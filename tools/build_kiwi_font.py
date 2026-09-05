@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kiwi_font import bytes_per_glyph, decode_glyph, parse_header  # noqa: E402
 from mes_codec import HIRA, hira_to_kata  # noqa: E402
-from zh_csv import load_rows  # noqa: E402
+from zh_csv import SKIP_CMAP_CHARS, load_rows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RAM = ROOT / "extracted/ram/eeMemory.bin"
@@ -98,7 +98,7 @@ def build_cmap(zh_chars: list[str], bank0: dict[str, int]) -> dict[str, int]:
     for ch in zh_chars:
         if ch in cmap:
             continue
-        if ch in " \t\n\r\u3000":
+        if ch in SKIP_CMAP_CHARS:
             continue
         extras.append(ch)
     punct = []

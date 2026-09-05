@@ -166,6 +166,18 @@ def encode_text(text: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
     return encode_tokens(toks, mul48=mul48)
 
 
+# Must match zh_csv.SKIP_CMAP_CHARS / build_kiwi_font extras skip.
+SKIP_GLYPH = frozenset(" \t\n\r\u3000")
+
+
+class MissingGlyphs(ValueError):
+    """zh contains characters that have no cmap id (would have been dropped)."""
+
+    def __init__(self, chars: str):
+        self.chars = chars
+        super().__init__(f"not in cmap: {chars}")
+
+
 def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
     """Keep original leading/trailing control codes; replace glyphs with zh."""
     toks = decode_font_codes(orig, mul48=False)
@@ -180,14 +192,21 @@ def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True
                 suffix.append(t)
         else:
             seen_glyph = True
+    missing: list[str] = []
+    seen_miss: set[str] = set()
     body = []
     for ch in zh:
-        if ch in "\n\r":
+        if ch in SKIP_GLYPH:
             continue
         g = cmap.get(ch)
         if g is None:
+            if ch not in seen_miss:
+                seen_miss.add(ch)
+                missing.append(ch)
             continue
         body.append(g)
+    if missing:
+        raise MissingGlyphs("".join(missing))
     return encode_tokens(list(prefix) + body + list(suffix), mul48=mul48)
 
 

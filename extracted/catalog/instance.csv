@@ -1,0 +1,16 @@
+id,jp,zh,notes,kind
+inst_hero_mon,ルーナエ,鲁奈,包装名 C10…C2；槽 0 子文件 5 名+24,hero
+inst_hero_tue,マルティス,马蒂斯,包装名 C10…C2；槽 0 子文件 5 名+24,hero
+inst_hero_wed,メルクリィ,梅尔克里,包装名 C10…C2；槽 0 子文件 5 名+24,hero
+inst_hero_thu,ペンプティ,彭普蒂,包装名 C10…C2；槽 0 子文件 5 名+24,hero
+inst_hero_fri,フライデー,弗莱迪,包装名 C10…C2；槽 0 子文件 5 名+24,hero
+inst_hero_seva,セバスチャン,塞巴斯蒂安,包装名 C10…C2；槽 0 子文件 5 hero_seva,hero
+inst_planet_sun,アルマムーン,阿尔玛之月,据点标题假名＋旧星码；槽 0 子文件 9 +12,planet
+inst_planet_mon,ロマンシング,浪漫,据点标题假名＋旧星码；槽 0 子文件 9 +12,planet
+inst_planet_tue,リローデド,重装,据点标题假名＋旧星码；槽 0 子文件 9 +12,planet
+inst_planet_wed,アクエリアス,宝瓶,据点标题假名＋旧星码；首都节点是の初不是星,planet
+inst_planet_wed_init,アクエリアスの初,宝瓶,宝瓶首都节点；の初为旧码不是星,planet_init
+inst_planet_thu,エルム,榆木,据点标题假名＋旧星码；槽 0 子文件 9 目前无命中,planet
+inst_planet_fri,コギトエルゴスム,我思故我在,据点标题假名＋旧星码；槽 0 子文件 9 +12,planet
+inst_elf_cocott,ココット,可可特,ELF 开局默认将军名 VA 0x41B1A0,elf
+inst_elf_alfalfa,アルファルファ,阿鲁法鲁法,ELF 开局默认将军名 VA 0x41B1A0,elf

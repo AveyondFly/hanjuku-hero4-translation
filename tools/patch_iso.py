@@ -24,6 +24,7 @@ from mes_codec import (  # noqa: E402
     MissingGlyphs,
     decode_font_codes,
     encode_merged,
+    encode_text,
     encode_token,
     encode_tokens,
     pack_trie,
@@ -219,6 +220,14 @@ def rebuild_mes_file(
                     new_strs.append(transcode_raw(raw))
             else:
                 new_strs.append(transcode_raw(raw))
+        extra = len(strs)
+        while True:
+            sid = f"{k}#{extra}"
+            zh = catalog.get(sid) or ""
+            if not zh.strip() or keep_raw(sid, kinds.get(sid, "")):
+                break
+            new_strs.append(encode_text(zh, cmap, mul48=True))
+            extra += 1
         out.append((key, new_strs))
     return pack_trie(out)
 
@@ -625,6 +634,315 @@ def patch_hud_name_remap(elf: bytearray, cmap: dict[str, int]) -> None:
     if orig in (hop_j, hop_jal) or cave_head == stock:
         elf[cave_off : cave_off + n] = b"\x00" * n
         print(f"cleared name-remap cave {NAME_REMAP_VA:#x} ({n} bytes)")
+
+
+# Title scene object is malloc(3488). Menu text widgets are 656 bytes at
+# +1136, +1792, +2448; 「快点啊」 is +480. Grow the allocation for two extra
+# labels on the menu copyright row: 汉化测试alpha left-aligned in screen
+# space (title root), by KK right of SQUARE ENIX (menu container). PrintMes
+# stays unhooked — SetText (0x2E5378) already calls it once at init.
+TITLE_WIDGET = 656
+TITLE_MALLOC_VA = 0x353A8C
+TITLE_MALLOC_OLD = 3488
+TITLE_MALLOC_NEW = 3488 + TITLE_WIDGET * 2
+TITLE_LEFT_OFF = 3488
+TITLE_RIGHT_OFF = 3488 + TITLE_WIDGET
+TITLE_PROMPT_OFF = 480  # 「快点啊」 (still destroyed in the hooked dtor)
+TITLE_CTOR_HOOK = 0x352C00
+TITLE_DTOR_HOOK = 0x353ED4
+TITLE_VER_CAVE = 0x42E500  # zero padding after the unused name-remap cave
+TITLE_CAVE_ROOM = 0x400
+TITLE_TEXT_CTOR = 0x2E4DE8
+TITLE_GETMES = 0x2D43F0
+TITLE_SETTEXT = 0x2E5378
+TITLE_PARENT = 0x2DF5B8
+TITLE_TEXT_DTOR = 0x2DEDD0
+TITLE_FLAG_GET = 0x2D13F8
+TITLE_TEXT_VTABLE = 0x45CD50
+TITLE_LEFT_LINE = 5  # sysmes_title_term#5  汉化测试alpha
+TITLE_RIGHT_LINE = 6  # sysmes_title_term#6  by KK
+TITLE_LEFT_ANCHOR = 1136  # 「从头开始」 (colour)
+TITLE_RIGHT_ANCHOR = 2448  # 「选项」
+# Menu container ($s5) sits at world x=64, w=384. Child x=0 is that strip,
+# which still covers ©2005. Left stamp parents to the title root ($s2)
+# so X is in the same 0..512 space as the copyright sprite.
+TITLE_LEFT_X = 0x41000000  # 8.0, screen-left (overscan pad)
+TITLE_RIGHT_X_OFF = 0x42000000  # +32.0 past 选项, after SQUARE ENIX
+TITLE_VER_Y_OFF = 0x41C00000  # +24.0, copyright row
+
+
+def _jal_ins(target: int) -> int:
+    return (3 << 26) | ((target >> 2) & 0x3FFFFFF)
+
+
+def _assemble_ops(base_va: int, ops: list) -> bytes:
+    """Tiny EE assembler used by the title-version stubs."""
+    z, at, v0 = 0, 1, 2
+    _ = (z, at, v0)
+    ADDIU, BEQ, LUI, LW, SW, LBU, SB = 9, 4, 15, 0x23, 0x2B, 0x24, 0x28
+    DADDU, SWC1, LWC1, SD, LD, LQ, SQ = 0x2D, 0x39, 0x31, 0x3F, 0x37, 0x1E, 0x1F
+    _ = LBU
+    labels: dict[str, int] = {}
+    words: list[object] = []
+    for op in ops:
+        if op[0] == "label":
+            labels[op[1]] = len(words)
+            continue
+        words.append(op)
+
+    def rel(idx: int, lab: str) -> int:
+        return labels[lab] - (idx + 1)
+
+    out = bytearray()
+    for i, op in enumerate(words):
+        k = op[0]
+        pc = base_va + i * 4
+        if k == "nop":
+            w = 0
+        elif k == "addiu":
+            w = _i_ins(ADDIU, op[2], op[1], op[3])
+        elif k == "lui":
+            w = _i_ins(LUI, 0, op[1], op[2])
+        elif k == "lw":
+            w = _i_ins(LW, op[2], op[1], op[3])
+        elif k == "sw":
+            w = _i_ins(SW, op[2], op[1], op[3])
+        elif k == "sb":
+            w = _i_ins(SB, op[2], op[1], op[3])
+        elif k == "beq":
+            w = _i_ins(BEQ, op[1], op[2], rel(i, op[3]))
+        elif k == "daddu":
+            w = _r_ins(DADDU, op[1], op[2], op[3])
+        elif k == "jal":
+            w = _jal_ins(op[1])
+        elif k == "jr":
+            w = (op[1] << 21) | 8
+        elif k == "sd":
+            w = _i_ins(SD, op[2], op[1], op[3])
+        elif k == "ld":
+            w = _i_ins(LD, op[2], op[1], op[3])
+        elif k == "mtc1":
+            w = (0x11 << 26) | (4 << 21) | (op[1] << 16) | (op[2] << 11)
+        elif k == "swc1":
+            w = _i_ins(SWC1, op[2], op[1], op[3])
+        elif k == "lwc1":
+            w = _i_ins(LWC1, op[2], op[1], op[3])
+        elif k == "lq":
+            w = _i_ins(LQ, op[2], op[1], op[3])
+        elif k == "sq":
+            w = _i_ins(SQ, op[2], op[1], op[3])
+        elif k == "add.s":
+            # add.s fd, fs, ft
+            w = 0x46000000 | (op[3] << 16) | (op[2] << 11) | (op[1] << 6)
+        else:
+            raise SystemExit(f"unknown mips op {op}")
+        if k == "beq" and not -32768 <= rel(i, op[3]) <= 32767:
+            raise SystemExit(f"branch too far at {pc:#x}")
+        out += struct.pack("<I", w)
+        _ = pc
+    return bytes(out)
+
+
+def _title_stamp_ops(
+    *,
+    off: int,
+    line: int,
+    anchor: int,
+    skip: str,
+    x_off: int | None = None,
+    x_abs: int | None = None,
+    to_root: bool = False,
+) -> list:
+    """Create one mes-backed label, copy colour from `anchor`, sit on the copyright row.
+
+    x_abs: write that float as X (left-align). x_off: copy anchor X and add.
+    to_root: parent to title root $s2 (world 0..512) instead of menu $s5.
+    """
+    t0, t1 = 8, 9
+    a0, a1, a2 = 4, 5, 6
+    v0, at, sp = 2, 1, 29
+    s2, s4, s5, s6, z = 18, 20, 21, 22, 0
+    vtable_lo = TITLE_TEXT_VTABLE - 0x460000
+    if (x_off is None) == (x_abs is None):
+        raise SystemExit("stamp needs exactly one of x_off / x_abs")
+    if x_abs is not None:
+        x_ops = [
+            ("lui", at, x_abs >> 16),
+            ("mtc1", at, 0),
+            ("swc1", 0, t0, 0),
+        ]
+    else:
+        x_ops = [
+            ("lwc1", 0, t1, 0),
+            ("lui", at, x_off >> 16),
+            ("mtc1", at, 4),
+            ("add.s", 0, 0, 4),
+            ("swc1", 0, t0, 0),
+        ]
+    if to_root:
+        # world Y = menu-container Y + anchor local Y + 24
+        y_ops = [
+            ("lwc1", 1, s5, 4),
+            ("lwc1", 2, t1, 4),
+            ("add.s", 1, 1, 2),
+            ("lui", at, TITLE_VER_Y_OFF >> 16),
+            ("mtc1", at, 5),
+            ("add.s", 1, 1, 5),
+            ("swc1", 1, t0, 4),
+        ]
+        parent = s2
+    else:
+        y_ops = [
+            ("lwc1", 1, t1, 4),
+            ("lui", at, TITLE_VER_Y_OFF >> 16),
+            ("mtc1", at, 5),
+            ("add.s", 1, 1, 5),
+            ("swc1", 1, t0, 4),
+        ]
+        parent = s5
+    return [
+        ("addiu", t0, s2, off),
+        ("sw", t0, sp, 16),
+        ("daddu", a0, t0, z),
+        ("jal", TITLE_TEXT_CTOR),
+        ("nop",),
+        ("lw", t0, sp, 16),
+        ("lui", a1, 0x46),
+        ("addiu", a1, a1, vtable_lo),
+        ("sw", a1, t0, 68),
+        ("sw", z, t0, 144),
+        ("sw", z, t0, 92),
+        ("daddu", a0, s6, z),
+        ("daddu", a1, s4, z),
+        ("jal", TITLE_GETMES),
+        ("addiu", a2, z, line),
+        ("beq", v0, z, skip),
+        ("daddu", a1, v0, z),
+        ("lw", t0, sp, 16),
+        ("jal", TITLE_SETTEXT),
+        ("daddu", a0, t0, z),
+        ("label", skip),
+        ("lw", t0, sp, 16),
+        ("addiu", t1, s2, anchor),
+        ("lq", v0, t1, 32),
+        ("sq", v0, t0, 32),
+        *y_ops,
+        *x_ops,
+        ("daddu", a0, parent, z),
+        ("jal", TITLE_PARENT),
+        ("daddu", a1, t0, z),
+    ]
+
+
+def _title_version_ctor_ops() -> list:
+    ra, sp = 31, 29
+    ops = [
+        ("addiu", sp, sp, -32),
+        ("sd", ra, sp, 0),
+    ]
+    ops += _title_stamp_ops(
+        off=TITLE_LEFT_OFF,
+        line=TITLE_LEFT_LINE,
+        anchor=TITLE_LEFT_ANCHOR,
+        x_abs=TITLE_LEFT_X,
+        to_root=True,
+        skip="skipL",
+    )
+    ops += _title_stamp_ops(
+        off=TITLE_RIGHT_OFF,
+        line=TITLE_RIGHT_LINE,
+        anchor=TITLE_RIGHT_ANCHOR,
+        x_off=TITLE_RIGHT_X_OFF,
+        skip="skipR",
+    )
+    ops += [
+        ("jal", TITLE_FLAG_GET),
+        ("nop",),
+        ("ld", ra, sp, 0),
+        ("jr", ra),
+        ("addiu", sp, sp, 32),
+    ]
+    return ops
+
+
+def _title_version_dtor_ops() -> list:
+    a0, a1, ra, sp, s1, z = 4, 5, 31, 29, 17, 0
+    return [
+        ("addiu", sp, sp, -16),
+        ("sd", ra, sp, 0),
+        ("addiu", a0, s1, TITLE_RIGHT_OFF),
+        ("jal", TITLE_TEXT_DTOR),
+        ("addiu", a1, z, 2),
+        ("addiu", a0, s1, TITLE_LEFT_OFF),
+        ("jal", TITLE_TEXT_DTOR),
+        ("addiu", a1, z, 2),
+        ("addiu", a0, s1, TITLE_PROMPT_OFF),
+        ("jal", TITLE_TEXT_DTOR),
+        ("addiu", a1, z, 2),
+        ("ld", ra, sp, 0),
+        ("jr", ra),
+        ("addiu", sp, sp, 16),
+    ]
+
+
+def _jal_target(w: int) -> int | None:
+    if (w >> 26) != 3:
+        return None
+    return (w & 0x3FFFFFF) << 2
+
+
+def patch_title_version(elf: bytearray) -> None:
+    """Copyright-row stamps: 汉化测试alpha (#5) and by KK (#6)."""
+    ctor = _assemble_ops(TITLE_VER_CAVE, _title_version_ctor_ops())
+    dtor_va = TITLE_VER_CAVE + len(ctor)
+    dtor = _assemble_ops(dtor_va, _title_version_dtor_ops())
+    blob = ctor + dtor
+    cave_off = fo(TITLE_VER_CAVE)
+    if len(blob) > TITLE_CAVE_ROOM:
+        raise SystemExit(f"title-version cave too big {len(blob)} > {TITLE_CAVE_ROOM}")
+    if cave_off + TITLE_CAVE_ROOM > len(elf):
+        raise SystemExit("title-version cave past ELF end")
+    elf[cave_off : cave_off + TITLE_CAVE_ROOM] = b"\x00" * TITLE_CAVE_ROOM
+    elf[cave_off : cave_off + len(blob)] = blob
+
+    malloc_off = fo(TITLE_MALLOC_VA)
+    malloc_w = struct.unpack_from("<I", elf, malloc_off)[0]
+    malloc_ok = {
+        _i_ins(9, 0, 4, TITLE_MALLOC_OLD),
+        _i_ins(9, 0, 4, TITLE_MALLOC_OLD + TITLE_WIDGET),
+        _i_ins(9, 0, 4, TITLE_MALLOC_NEW),
+    }
+    if malloc_w not in malloc_ok:
+        raise SystemExit(f"title malloc unexpected {malloc_w:#x}")
+    struct.pack_into("<I", elf, malloc_off, _i_ins(9, 0, 4, TITLE_MALLOC_NEW))
+
+    cave_hi = TITLE_VER_CAVE + TITLE_CAVE_ROOM
+    ctor_off = fo(TITLE_CTOR_HOOK)
+    ctor_w = struct.unpack_from("<I", elf, ctor_off)[0]
+    ctor_stock = _jal_ins(TITLE_FLAG_GET)
+    ctor_hook = _jal_ins(TITLE_VER_CAVE)
+    ctor_tgt = _jal_target(ctor_w)
+    if ctor_w != ctor_stock and not (
+        ctor_tgt is not None and TITLE_VER_CAVE <= ctor_tgt < cave_hi
+    ):
+        raise SystemExit(f"title ctor hook unexpected {ctor_w:#x}")
+    struct.pack_into("<I", elf, ctor_off, ctor_hook)
+
+    dtor_off = fo(TITLE_DTOR_HOOK)
+    dtor_w = struct.unpack_from("<I", elf, dtor_off)[0]
+    dtor_stock = _jal_ins(TITLE_TEXT_DTOR)
+    dtor_hook = _jal_ins(dtor_va)
+    dtor_tgt = _jal_target(dtor_w)
+    if dtor_w != dtor_stock and not (
+        dtor_tgt is not None and TITLE_VER_CAVE <= dtor_tgt < cave_hi
+    ):
+        raise SystemExit(f"title dtor hook unexpected {dtor_w:#x}")
+    struct.pack_into("<I", elf, dtor_off, dtor_hook)
+    print(
+        f"title stamps +{TITLE_LEFT_OFF}/+{TITLE_RIGHT_OFF} "
+        f"cave {TITLE_VER_CAVE:#x} ({len(blob)} bytes) "
+        f"malloc {TITLE_MALLOC_OLD}->{TITLE_MALLOC_NEW}"
+    )
 
 
 def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
@@ -1272,6 +1590,7 @@ def main() -> None:
     if not fonts_only:
         patch_embedded_names(elf, cmap)
         patch_hud_name_remap(elf, cmap)
+        patch_title_version(elf)
 
     with ISO.open("r+b") as fp:
         disc_elf_head = iso_read(fp, ELF_LBA, 4)

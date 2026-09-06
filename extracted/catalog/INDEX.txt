@@ -20,7 +20,7 @@ ch08_ear.csv	429	第八章 地球
 event_solo.csv	1167	个人事件
 event_calendar.csv	383	月次／日历事件
 event_other.csv	1556	开场、竞技场、通话、结束等
-ui_sys.csv	888	系统文案 sysmes／存储卡
+ui_sys.csv	890	系统文案 sysmes／存储卡
 ui_menu.csv	820	菜单
 dic.csv	3882	图鉴
 egg_du.csv	1223	蛋怪对白 eg_du
@@ -41,5 +41,5 @@ generals.csv	1162	将军卡片名／兴趣
 instance.csv	579	槽 0 英雄／行星／据点／王牌名（非 mes）
 debug.csv	299	调试／测试
 other.csv	0	未归类
-合计	26209
+合计	26211
 

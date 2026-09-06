@@ -883,6 +883,8 @@ sysmes_title_term#1,はじめから,从头开始,ram_1005_sysmes,text
 sysmes_title_term#2,つづきから,继续游戏,ram_1005_sysmes,text
 sysmes_title_term#3,とちゅうから（周回軍）,从中途开始（周目）,ram_1005_sysmes,text
 sysmes_title_term#4,オプション,选项,ram_1005_sysmes,text
+sysmes_title_term#5,汉化测试alpha,汉化测试alpha,title copyright-row left of ©2005,text
+sysmes_title_term#6,by KK,by KK,title copyright-row right of SQUARE ENIX,text
 sysmes_umu_ikan#0,うむっ。,嗯。,ram_1005_sysmes,text
 sysmes_umu_ikan#1,いかんっ。,不行。,ram_1005_sysmes,text
 sysmes_worldmap_command#0,メインメニュー,主菜单,ram_1005_sysmes,text

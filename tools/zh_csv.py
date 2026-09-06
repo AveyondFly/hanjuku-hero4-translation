@@ -52,7 +52,7 @@ SHEETS: list[tuple[str, str]] = [
     ("dungeon_other.csv", "迷宫系统／教程／蛋迷宫"),
     ("battle.csv", "战斗：王牌／头目／奥之手／杂兵"),
     ("generals.csv", "将军卡片名／兴趣"),
-    ("instance.csv", "槽 0 英雄／行星名（非 mes）"),
+    ("instance.csv", "槽 0 英雄／行星／据点名（非 mes）"),
     ("debug.csv", "调试／测试"),
     ("other.csv", "未归类"),
 ]
@@ -141,6 +141,8 @@ def classify(sid: str, jp: str) -> str:
         return "planet_init"
     if sid.startswith("inst_planet_"):
         return "planet"
+    if sid.startswith("inst_node_"):
+        return "node"
     if sid.startswith("inst_elf_"):
         return "elf"
     if sid.startswith("gen_"):
@@ -304,7 +306,7 @@ def _write_index(counts: dict[str, int]) -> None:
         "查询：python3 tools/catalog_query.py get|prefix|search|set|stats",
         "灌盘读整个目录；改某一章只改对应 csv。",
         "将军名 id 为 gen_zeus，兴趣为 gen_zeus#hobby。",
-        "槽 0 英雄／行星名 id 为 inst_hero_seva / inst_planet_sun。",
+        "槽 0 英雄／行星／据点名 id 为 inst_hero_seva / inst_planet_sun / inst_node_000。",
         "",
         "文件\t行数\t说明",
     ]

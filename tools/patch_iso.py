@@ -29,6 +29,7 @@ from mes_codec import (  # noqa: E402
     pack_trie,
     walk_trie,
 )
+from node_zh import decode_node_title, translate_node  # noqa: E402
 from zh_csv import (  # noqa: E402
     classify,
     keep_raw,
@@ -650,8 +651,10 @@ def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
 # VFS slot 0 (LBA from hash[0]) is an F7-style directory. Subfiles used at
 # new-game init (0x236c48): 0 = 200×64 egg-monsters (name +8, ASCII id +41),
 # 1 = 1000×48 skills (5 slots per egg, name +6), 4 = 100-byte units,
-# 5 = 7×84 weekday heroes (name at +24), 9 = 518×42 map nodes (title +12).
-SLOT0_DIR_INDEXES = (4, 5, 9)
+# 5 = 7×84 weekday heroes (name at +24), 9 = 518×42 map nodes (title +20).
+NODE_REC = 42
+NODE_NAME_OFF = 20
+NODE_NAME_ROOM = NODE_REC - NODE_NAME_OFF
 EGG_REC = 64
 EGG_NAME_OFF = 8
 EGG_ID_OFF = 41
@@ -660,6 +663,29 @@ SKILL_REC = 48
 SKILL_NAME_OFF = 6
 SKILL_NAME_ROOM = SKILL_REC - SKILL_NAME_OFF
 SKILL_SLOTS_PER_EGG = 5
+HERO_REC = 84
+HERO_NAME_OFF = 24
+HERO_NAME_ROOM = HERO_REC - HERO_NAME_OFF
+WEEKDAY_HERO_IDS = (
+    "inst_hero_mon",
+    "inst_hero_tue",
+    "inst_hero_wed",
+    "inst_hero_thu",
+    "inst_hero_fri",
+    "inst_hero_seva",
+)
+UNIT_REC = 100
+UNIT_NAME_OFF = 16
+UNIT_NAME_ROOM = 31  # +16..+46; other fields resume at +47
+# Slot-0 subfile 9 records that hold inst_planet_* titles (not inst_node_*).
+PLANET_TITLE_RECORDS = {
+    0: "inst_planet_sun",
+    6: "inst_planet_sun",
+    41: "inst_planet_mon",
+    82: "inst_planet_tue",
+    141: "inst_planet_wed",
+    349: "inst_planet_fri",
+}
 
 
 def _wrap_zh_name(cmap: dict[str, int], zh: str) -> bytes:
@@ -667,6 +693,69 @@ def _wrap_zh_name(cmap: dict[str, int], zh: str) -> bytes:
         [NAME_PREFIX, *[_zh_glyph(cmap, ch) for ch in zh], NAME_SUFFIX],
         mul48=True,
     )
+
+
+def _plain_zh_name(cmap: dict[str, int], zh: str) -> bytes:
+    return encode_tokens([_zh_glyph(cmap, ch) for ch in zh], mul48=True)
+
+
+def _load_prev_cmap(current: dict[str, int]) -> dict[str, int] | None:
+    """Glyph map from last commit, if it differs from the working cmap.
+
+    build_kiwi_font used to re-sort CJK and shift ids. Names encoded then
+    but not field-rewritten (heroes, planet titles) decode as the wrong
+    characters until recoded. After ids are stable this returns None.
+    """
+    r = subprocess.run(
+        ["git", "show", "HEAD:extracted/zh_cmap.csv"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if r.returncode != 0 or not r.stdout:
+        return None
+    prev: dict[str, int] = {}
+    for row in csv.DictReader(r.stdout.splitlines()):
+        ch = row.get("char") or ""
+        if ch:
+            prev[ch] = int(row["glyph"])
+    if not prev or prev == current:
+        return None
+    return prev
+
+
+def _decode_zh_glyphs(raw: bytes, cmap: dict[str, int]) -> str:
+    if not raw or not cmap:
+        return ""
+    rev = {gid: ch for ch, gid in cmap.items()}
+    out: list[str] = []
+    for t in decode_font_codes(raw, font_max=12000, mul48=True):
+        if isinstance(t, tuple):
+            continue
+        if not isinstance(t, int):
+            return ""
+        ch = rev.get(t)
+        if ch is None:
+            return ""
+        out.append(ch)
+    return "".join(out)
+
+
+def _recover_known_zh(
+    raw: bytes,
+    cmap: dict[str, int],
+    prev_cmap: dict[str, int] | None,
+    known_zh: set[str],
+) -> str:
+    text = _decode_zh_glyphs(raw, cmap)
+    if text in known_zh:
+        return text
+    if prev_cmap:
+        text = _decode_zh_glyphs(raw, prev_cmap)
+        if text in known_zh:
+            return text
+    return ""
 
 
 def _write_name_field(buf: bytearray, off: int, raw: bytes, room: int) -> bool:
@@ -755,12 +844,108 @@ def _patch_egg_skill_table(
     return n
 
 
+def _patch_hero_table(plain: bytearray, cmap: dict[str, int], zhmap: dict[str, str]) -> int:
+    """Write weekday hero names by record. Index 0 is unused (not inst_hero_*)."""
+    n = 0
+    nrec = len(plain) // HERO_REC
+    for i, sid in enumerate(WEEKDAY_HERO_IDS, start=1):
+        if i >= nrec:
+            break
+        zh = (zhmap.get(sid) or "").strip()
+        if not zh:
+            continue
+        new = _wrap_zh_name(cmap, zh)
+        off = i * HERO_REC + HERO_NAME_OFF
+        cur = bytes(plain[off : off + HERO_NAME_ROOM])
+        padded = new.ljust(HERO_NAME_ROOM, b"\x00")
+        if cur == padded:
+            continue
+        if not _write_name_field(plain, off, new, HERO_NAME_ROOM):
+            print(f"slot0 hero skip {sid}: {zh!r} needs {len(new)}+NUL, room {HERO_NAME_ROOM}")
+            continue
+        n += 1
+    return n
+
+
+def _patch_unit_stale_names(
+    plain: bytearray,
+    cmap: dict[str, int],
+    prev_cmap: dict[str, int] | None,
+    known_zh: set[str],
+) -> int:
+    """Recode C10-wrapped names in the 100-byte unit table if they are known zh."""
+    n = 0
+    nrec = len(plain) // UNIT_REC
+    for i in range(nrec):
+        off = i * UNIT_REC + UNIT_NAME_OFF
+        raw = bytes(plain[off : off + UNIT_NAME_ROOM]).split(b"\x00", 1)[0]
+        if not raw:
+            continue
+        zh = _recover_known_zh(raw, cmap, prev_cmap, known_zh)
+        if not zh:
+            continue
+        new = _wrap_zh_name(cmap, zh)
+        cur = bytes(plain[off : off + UNIT_NAME_ROOM])
+        padded = new.ljust(UNIT_NAME_ROOM, b"\x00")
+        if cur == padded:
+            continue
+        if not _write_name_field(plain, off, new, UNIT_NAME_ROOM):
+            print(f"slot0 unit skip {i}: {zh!r} needs {len(new)}+NUL, room {UNIT_NAME_ROOM}")
+            continue
+        n += 1
+    return n
+
+
+def _patch_map_nodes(
+    plain: bytearray,
+    cmap: dict[str, int],
+    zh_by_jp: dict[str, str],
+    zhmap: dict[str, str],
+    prev_cmap: dict[str, int] | None,
+    known_zh: set[str],
+) -> int:
+    n = 0
+    nrec = len(plain) // NODE_REC
+    for i in range(nrec):
+        off = i * NODE_REC + NODE_NAME_OFF
+        raw = bytes(plain[off : (i + 1) * NODE_REC]).split(b"\x00", 1)[0]
+        if not raw:
+            continue
+        sid = PLANET_TITLE_RECORDS.get(i)
+        zh = (zhmap.get(sid) or "").strip() if sid else ""
+        if not zh:
+            jp = decode_node_title(raw)
+            zh = (zh_by_jp.get(jp) or "").strip() or translate_node(jp)
+        if not zh:
+            zh = _recover_known_zh(raw, cmap, prev_cmap, known_zh)
+        if not zh:
+            continue
+        miss = [ch for ch in zh if ch not in cmap]
+        if miss:
+            print(f"slot0 node skip {i}: missing {''.join(miss)!r} in {zh!r}")
+            continue
+        new = _plain_zh_name(cmap, zh)
+        cur = bytes(plain[off : off + NODE_NAME_ROOM])
+        padded = new.ljust(NODE_NAME_ROOM, b"\x00")
+        if cur == padded:
+            continue
+        if not _write_name_field(plain, off, new, NODE_NAME_ROOM):
+            print(
+                f"slot0 node skip {i}: {zh!r} needs {len(new)}+NUL, "
+                f"room {NODE_NAME_ROOM}"
+            )
+            continue
+        n += 1
+    return n
+
+
 def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
     """Recode HUD names in VFS slot 0 (heroes, planets, egg-monsters, skills).
 
     Those strings are XOR/t1-scrambled on disc, so a raw ISO search misses
     them. The loader (0x362928) decrypts into RAM. Do not hook PrintMes.
     Egg display names use catalog ids such as eg_cl_eggm / eg_cl_eggm_at1.
+    Weekday heroes and planet titles are written by record, not JP needles.
     """
     lba, packed, _unp = struct.unpack_from("<III", elf, fo(TABLE_VA))
     if lba < 1 or packed < 64:
@@ -768,22 +953,51 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
     blob = bytearray(iso_read(fp, lba, packed))
     entries = _hud_name_entries(cmap)
     zhmap = zh_by_id()
+    prev_cmap = _load_prev_cmap(cmap)
+    if prev_cmap:
+        print(f"slot0 previous cmap ({len(prev_cmap)} chars) for stale-id recovery")
+    known_hero: set[str] = set()
+    known_node: set[str] = set()
+    for row in load_rows():
+        sid = row.get("id") or ""
+        zh = (row.get("zh") or "").strip()
+        jp = (row.get("jp") or "").strip()
+        if not zh or zh == jp:
+            continue
+        if sid.startswith(("inst_hero_", "inst_elf_")):
+            known_hero.add(zh)
+        if sid.startswith(("inst_planet_", "inst_node_")):
+            known_node.add(zh)
     total = 0
-    for idx in SLOT0_DIR_INDEXES:
+
+    def _sub(idx: int) -> tuple[dict | None, bytearray | None]:
         ent = parse_dir_entry(bytes(blob[idx * 8 : idx * 8 + 8]))
         if ent["off"] + ent["size"] > len(blob) or ent["size"] < 8:
             print(f"slot0[{idx}] skip bad dir off={ent['off']} size={ent['size']}")
-            continue
-        plain = bytearray(decrypt_sub(blob, ent))
-        n = 0
-        for old, new in entries:
-            n += _replace_in_buf(plain, old, new)
-        if n == 0:
-            print(f"slot0[{idx}] no HUD names")
-            continue
-        _slot0_put_sub(blob, ent, bytes(plain))
-        total += n
-        print(f"slot0[{idx}] recoded {n} names (off={ent['off']} size={ent['size']})")
+            return None, None
+        return ent, bytearray(decrypt_sub(blob, ent))
+
+    ent4, plain4 = _sub(4)
+    if plain4 is not None:
+        n = sum(_replace_in_buf(plain4, old, new) for old, new in entries)
+        n += _patch_unit_stale_names(plain4, cmap, prev_cmap, known_hero)
+        if n:
+            _slot0_put_sub(blob, ent4, bytes(plain4))
+            total += n
+            print(f"slot0[4] recoded {n} names (off={ent4['off']} size={ent4['size']})")
+        else:
+            print("slot0[4] no HUD names")
+
+    ent5, plain5 = _sub(5)
+    if plain5 is not None:
+        n = _patch_hero_table(plain5, cmap, zhmap)
+        n += sum(_replace_in_buf(plain5, old, new) for old, new in entries)
+        if n:
+            _slot0_put_sub(blob, ent5, bytes(plain5))
+            total += n
+            print(f"slot0[5] recoded {n} hero names (off={ent5['off']} size={ent5['size']})")
+        else:
+            print("slot0[5] no HUD names")
 
     egg_ent = parse_dir_entry(bytes(blob[0:8]))
     skill_ent = parse_dir_entry(bytes(blob[8:16]))
@@ -803,18 +1017,37 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
         print("slot0[1] no egg skills")
     total += n_egg + n_sk
 
+    ent9, node_plain = _sub(9)
+    if node_plain is not None:
+        n_needle = sum(_replace_in_buf(node_plain, old, new) for old, new in entries)
+        node_zh = {
+            (r.get("jp") or ""): (r.get("zh") or "").strip()
+            for r in load_rows()
+            if r["id"].startswith("inst_node_")
+        }
+        n_node = _patch_map_nodes(
+            node_plain, cmap, node_zh, zhmap, prev_cmap, known_node
+        )
+        n = n_needle + n_node
+        if n:
+            _slot0_put_sub(blob, ent9, bytes(node_plain))
+            print(
+                f"slot0[9] recoded {n_node} map nodes"
+                + (f" + {n_needle} needles" if n_needle else "")
+                + f" (off={ent9['off']} size={ent9['size']})"
+            )
+            total += n
+        else:
+            print("slot0[9] no map nodes")
+
     if total == 0:
-        already = 0
-        for idx in SLOT0_DIR_INDEXES:
-            ent = parse_dir_entry(bytes(blob[idx * 8 : idx * 8 + 8]))
-            if ent["off"] + ent["size"] > len(blob) or ent["size"] < 8:
-                continue
-            plain = decrypt_sub(blob, ent)
-            already += sum(plain.count(new) for _old, new in entries)
-        already += _patch_egg_name_table(bytearray(decrypt_sub(blob, egg_ent)), cmap, zhmap)
-        if already:
-            print(f"slot0 names already recoded; skip")
-            return
+        lunae = (zhmap.get("inst_hero_mon") or "").strip()
+        if lunae and plain5 is not None:
+            want = _wrap_zh_name(cmap, lunae)
+            off = HERO_REC + HERO_NAME_OFF
+            if bytes(plain5[off : off + len(want)]) == want:
+                print("slot0 names already recoded; skip")
+                return
         raise SystemExit("slot0 HUD/egg names: nothing replaced (directory shifted?)")
     iso_write(fp, lba, bytes(blob), packed)
     print(f"slot0 instance names: {total} replacements, LBA {lba}")

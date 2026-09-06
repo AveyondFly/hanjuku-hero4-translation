@@ -95,7 +95,8 @@ LBA 580061 一带的 TIM2（256x128）
    - 英雄／顾问和王国名在 VFS 槽 0 的加密子文件里，译文在 `extracted/catalog/instance.csv`
      （`inst_hero_seva`、`inst_planet_sun`）。`patch_iso.py` 解密后按 catalog zh 重编码。
      子文件 5：7×84 字节英雄表，包装名在 +24。
-     子文件 9：518×42 字节据点表，王国标题在 +12（假名＋旧「星」码 `9497`）。
+     子文件 9：518×42 字节据点表，标题在 +20（假名＋旧「星」码 `9497`）。
+     据点一览前缀 `sysmes_field_base_mark`（解/形/敗 → 占/中/敌）。
      不要挂钩 PrintMes（`0x2DB990`）——jal 会死循环，j 进 libcdvd `.data` 洞穴（`0x42E120`）
      会 TLB miss / 跳到未对齐 PC。
    - 王国名旧后缀 2 字节「星」被 ×48 解码器读成「啊」，汉化时去掉该后缀。

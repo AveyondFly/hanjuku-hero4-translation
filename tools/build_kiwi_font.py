@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from kiwi_font import bytes_per_glyph, decode_glyph, parse_header  # noqa: E402
 from mes_codec import HIRA, hira_to_kata  # noqa: E402
-from zh_csv import SKIP_CMAP_CHARS, load_rows  # noqa: E402
+from zh_csv import SKIP_CMAP_CHARS, load_cmap, load_rows  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RAM = ROOT / "extracted/ram/eeMemory.bin"
@@ -91,14 +91,27 @@ def collect_zh_chars() -> list[str]:
     return sorted(seen, key=lambda c: (-seen[c], c))
 
 
-def build_cmap(zh_chars: list[str], bank0: dict[str, int]) -> dict[str, int]:
+def build_cmap(
+    zh_chars: list[str],
+    bank0: dict[str, int],
+    existing: dict[str, int] | None = None,
+) -> dict[str, int]:
+    """Assign bank1 ids. Keep ids from `existing` so ISO/mes encodings stay valid.
+
+    Frequency-sorted rebuild used to insert new CJK in the middle and shift
+    every later glyph; slot 0 names that were not field-rewritten then garbled.
+    """
     cmap = dict(bank0)
-    next_id = 192
+    used = set(cmap.values())
+    if existing:
+        for ch, gid in existing.items():
+            if not ch or gid < 192 or ch in cmap or gid in used:
+                continue
+            cmap[ch] = gid
+            used.add(gid)
     extras: list[str] = []
     for ch in zh_chars:
-        if ch in cmap:
-            continue
-        if ch in SKIP_CMAP_CHARS:
+        if ch in cmap or ch in SKIP_CMAP_CHARS:
             continue
         extras.append(ch)
     punct = []
@@ -115,8 +128,16 @@ def build_cmap(zh_chars: list[str], bank0: dict[str, int]) -> dict[str, int]:
             punct.append(ch)
         else:
             other.append(ch)
+    next_id = max((g for g in used if g >= 192), default=191) + 1
+    if next_id < 192:
+        next_id = 192
     for ch in punct + latin + other + cjk:
+        if ch in cmap:
+            continue
+        while next_id in used:
+            next_id += 1
         cmap[ch] = next_id
+        used.add(next_id)
         next_id += 1
     return cmap
 
@@ -276,7 +297,11 @@ def main() -> None:
     ram = RAM.read_bytes()
     bank0 = bank0_char_map()
     zh_chars = collect_zh_chars()
-    cmap = build_cmap(zh_chars, bank0)
+    existing = load_cmap() if CMAP_PATH.exists() else {}
+    cmap = build_cmap(zh_chars, bank0, existing)
+    kept = sum(1 for ch, gid in cmap.items() if gid >= 192 and existing.get(ch) == gid)
+    added = sum(1 for ch, gid in cmap.items() if gid >= 192 and existing.get(ch) != gid)
+    print(f"cmap bank1 kept {kept} appended {added}")
     n1 = max(g for g in cmap.values() if g >= 192) - 191
     cjk_n = sum(1 for ch, g in cmap.items() if g >= 192 and "\u4e00" <= ch <= "\u9fff")
     print(f"cmap entries {len(cmap)}  bank0 {sum(1 for g in cmap.values() if g < 192)}  bank1 {n1}  CJK-in-bank1 {cjk_n}")

@@ -47,15 +47,18 @@
 - ヴィーナス       维纳斯（将军卡片名）
 - ゼウス           宙斯（将军卡片名）
 - ココット         可可特（将军卡片名；开场将军）
+- コーネリア       科涅里阿（据点／将军）
+- タイクーン       泰昆（据点）
 
 将军卡片显示名
 - 部队详情、编成、战斗头上的将军名在光盘 LBA 362 的 100 字节将军表里（VFS 槽 0），不是 EGG 模型。
 - 译文在 `extracted/catalog/generals.csv`（名字 `gen_zeus`，兴趣 `gen_zeus#hobby`）。用 `python3 tools/patch_generals.py` 重编码写回。
 - 兴趣只译了表里有的（网球、骑马、武道、兴趣等），其余仍假名。
 
-情报板英雄／行星标题（非 mes）
+情报板英雄／行星／据点标题（非 mes）
 - 开局 memcpy 进实例的显示名在 VFS 槽 0 加密子文件里，译文在 `extracted/catalog/instance.csv`
-  （`inst_hero_seva`、`inst_planet_sun` 等）。`patch_iso.py` 按 kind（hero / planet / planet_init）重编码。
+  （`inst_hero_seva`、`inst_planet_sun`、`inst_node_000` 等）。
+- 据点名在子文件 9 的 +20。旧「星」后缀会显示成「啊」，汉化时去掉。
 - 改 zh 后 `python3 tools/rebuild.py`，或只灌名：`python3 tools/patch_iso.py --slot0-names-only`。
 
 部队详情蛋怪名／技能

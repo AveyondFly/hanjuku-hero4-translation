@@ -30,6 +30,7 @@ from mes_codec import (  # noqa: E402
     walk_trie,
 )
 from node_zh import decode_node_title, translate_node  # noqa: E402
+from trump_zh import TRUMP_META32, decode_trump_name, translate_trump  # noqa: E402
 from zh_csv import (  # noqa: E402
     classify,
     keep_raw,
@@ -655,6 +656,11 @@ def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
 NODE_REC = 42
 NODE_NAME_OFF = 20
 NODE_NAME_ROOM = NODE_REC - NODE_NAME_OFF
+TRUMP_REC = 44
+TRUMP_NAME_OFF = 12
+TRUMP_NAME_ROOM = 20  # +12..+31; +32..+39 are category/stats (not padding)
+TRUMP_META_OFF = 32
+TRUMP_META_LEN = 8  # +33 = tab: 0=equip 1=attack 2=recover 3=special
 EGG_REC = 64
 EGG_NAME_OFF = 8
 EGG_ID_OFF = 41
@@ -939,6 +945,51 @@ def _patch_map_nodes(
     return n
 
 
+def _patch_trump_table(
+    plain: bytearray,
+    cmap: dict[str, int],
+    zhmap: dict[str, str],
+) -> int:
+    n = 0
+    nrec = len(plain) // TRUMP_REC
+    nmeta = len(TRUMP_META32) // TRUMP_META_LEN
+    if nrec != nmeta:
+        raise SystemExit(f"trump records {nrec} != meta {nmeta}")
+    for i in range(nrec):
+        rec = i * TRUMP_REC
+        off = rec + TRUMP_NAME_OFF
+        raw = bytes(plain[off : off + TRUMP_NAME_ROOM]).split(b"\x00", 1)[0]
+        sid = f"inst_trump_{i:03d}"
+        zh = (zhmap.get(sid) or "").strip()
+        if not zh and raw:
+            zh = translate_trump(decode_trump_name(raw))
+        changed = False
+        if zh:
+            miss = [ch for ch in zh if ch not in cmap]
+            if miss:
+                print(f"slot0 trump skip {i}: missing {''.join(miss)!r} in {zh!r}")
+            else:
+                new = _wrap_zh_name(cmap, zh)
+                cur = bytes(plain[off : off + TRUMP_NAME_ROOM])
+                padded = new.ljust(TRUMP_NAME_ROOM, b"\x00")
+                if cur != padded:
+                    if not _write_name_field(plain, off, new, TRUMP_NAME_ROOM):
+                        print(
+                            f"slot0 trump skip {i}: {zh!r} needs {len(new)}+NUL, "
+                            f"room {TRUMP_NAME_ROOM}"
+                        )
+                    else:
+                        changed = True
+        meta = TRUMP_META32[i * TRUMP_META_LEN : (i + 1) * TRUMP_META_LEN]
+        moff = rec + TRUMP_META_OFF
+        if bytes(plain[moff : moff + TRUMP_META_LEN]) != meta:
+            plain[moff : moff + TRUMP_META_LEN] = meta
+            changed = True
+        if changed:
+            n += 1
+    return n
+
+
 def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
     """Recode HUD names in VFS slot 0 (heroes, planets, egg-monsters, skills).
 
@@ -966,7 +1017,7 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
             continue
         if sid.startswith(("inst_hero_", "inst_elf_")):
             known_hero.add(zh)
-        if sid.startswith(("inst_planet_", "inst_node_")):
+        if sid.startswith(("inst_planet_", "inst_node_", "inst_trump_")):
             known_node.add(zh)
     total = 0
 
@@ -1039,6 +1090,19 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
             total += n
         else:
             print("slot0[9] no map nodes")
+
+    ent7, trump_plain = _sub(7)
+    if trump_plain is not None:
+        n_trump = _patch_trump_table(trump_plain, cmap, zhmap)
+        if n_trump:
+            _slot0_put_sub(blob, ent7, bytes(trump_plain))
+            print(
+                f"slot0[7] recoded {n_trump} trump names "
+                f"(off={ent7['off']} size={ent7['size']})"
+            )
+            total += n_trump
+        else:
+            print("slot0[7] no trump names")
 
     if total == 0:
         lunae = (zhmap.get("inst_hero_mon") or "").strip()

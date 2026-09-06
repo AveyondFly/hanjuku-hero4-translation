@@ -970,7 +970,8 @@ def _replace_in_buf(buf: bytearray, old: bytes, new: bytes) -> int:
 # VFS slot 0 (LBA from hash[0]) is an F7-style directory. Subfiles used at
 # new-game init (0x236c48): 0 = 200×64 egg-monsters (name +8, ASCII id +41),
 # 1 = 1000×48 skills (5 slots per egg, name +6), 4 = 100-byte units,
-# 5 = 7×84 weekday heroes (name at +24), 9 = 518×42 map nodes (title +20).
+# 5 = 7×84 weekday heroes (name at +24), 9 = 518×42 map nodes (title +20),
+# 12 = 24×38 おくのて names (name +6, room 22; trailer +28 must stay).
 NODE_REC = 42
 NODE_NAME_OFF = 20
 NODE_NAME_ROOM = NODE_REC - NODE_NAME_OFF
@@ -979,6 +980,9 @@ TRUMP_NAME_OFF = 12
 TRUMP_NAME_ROOM = 20  # +12..+31; +32..+39 are category/stats (not padding)
 TRUMP_META_OFF = 32
 TRUMP_META_LEN = 8  # +33 = tab: 0=equip 1=attack 2=recover 3=special
+OKUNOTE_REC = 38
+OKUNOTE_NAME_OFF = 6
+OKUNOTE_NAME_ROOM = 22  # +6..+27; +28..+37 are floats/flags
 EGG_REC = 64
 EGG_NAME_OFF = 8
 EGG_ID_OFF = 41
@@ -1308,12 +1312,48 @@ def _patch_trump_table(
     return n
 
 
+def _patch_okunote_table(
+    plain: bytearray,
+    cmap: dict[str, int],
+    zhmap: dict[str, str],
+) -> int:
+    n = 0
+    nrec = len(plain) // OKUNOTE_REC
+    if nrec * OKUNOTE_REC != len(plain):
+        print(f"slot0[12] skip: size {len(plain)} not a multiple of {OKUNOTE_REC}")
+        return 0
+    for i in range(nrec):
+        rec = i * OKUNOTE_REC
+        off = rec + OKUNOTE_NAME_OFF
+        zh = (zhmap.get(f"inst_okunote_{i:03d}") or "").strip()
+        if not zh:
+            continue
+        miss = [ch for ch in zh if ch not in cmap]
+        if miss:
+            print(f"slot0 okunote skip {i}: missing {''.join(miss)!r} in {zh!r}")
+            continue
+        new = _wrap_zh_name(cmap, zh)
+        cur = bytes(plain[off : off + OKUNOTE_NAME_ROOM])
+        padded = new.ljust(OKUNOTE_NAME_ROOM, b"\x00")
+        if cur == padded:
+            continue
+        if not _write_name_field(plain, off, new, OKUNOTE_NAME_ROOM):
+            print(
+                f"slot0 okunote skip {i}: {zh!r} needs {len(new)}+NUL, "
+                f"room {OKUNOTE_NAME_ROOM}"
+            )
+            continue
+        n += 1
+    return n
+
+
 def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
     """Recode HUD names in VFS slot 0 (heroes, planets, egg-monsters, skills).
 
     Those strings are XOR/t1-scrambled on disc, so a raw ISO search misses
     them. The loader (0x362928) decrypts into RAM. Do not hook PrintMes.
     Egg display names use catalog ids such as eg_cl_eggm / eg_cl_eggm_at1.
+    おくのて menu names are slot 0 subfile 12 (`inst_okunote_000`).
     Weekday heroes and planet titles are written by record, not JP needles.
     """
     lba, packed, _unp = struct.unpack_from("<III", elf, fo(TABLE_VA))
@@ -1421,6 +1461,19 @@ def patch_slot0_instance_names(fp, elf: bytes, cmap: dict[str, int]) -> None:
             total += n_trump
         else:
             print("slot0[7] no trump names")
+
+    ent12, okunote_plain = _sub(12)
+    if okunote_plain is not None:
+        n_oku = _patch_okunote_table(okunote_plain, cmap, zhmap)
+        if n_oku:
+            _slot0_put_sub(blob, ent12, bytes(okunote_plain))
+            print(
+                f"slot0[12] recoded {n_oku} okunote names "
+                f"(off={ent12['off']} size={ent12['size']})"
+            )
+            total += n_oku
+        else:
+            print("slot0[12] no okunote names")
 
     if total == 0:
         lunae = (zhmap.get("inst_hero_mon") or "").strip()

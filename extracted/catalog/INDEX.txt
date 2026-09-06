@@ -6,7 +6,7 @@
 查询：python3 tools/catalog_query.py get|prefix|search|set|stats
 灌盘读整个目录；改某一章只改对应 csv。
 将军名 id 为 gen_zeus，兴趣为 gen_zeus#hobby。
-槽 0 英雄／行星／据点／王牌名 id 为 inst_hero_seva / inst_planet_sun / inst_node_000 / inst_trump_000。
+槽 0 英雄／行星／据点／王牌／杀手锏名 id 为 inst_hero_seva / inst_planet_sun / inst_node_000 / inst_trump_000 / inst_okunote_000。
 
 文件	行数	说明
 ch01_sun.csv	793	第一章 阿尔玛之月（日曜）
@@ -38,8 +38,8 @@ dungeon.csv	2022	迷宫主文案 d_dung
 dungeon_other.csv	1117	迷宫系统／教程／蛋迷宫
 battle.csv	802	战斗：王牌／头目／奥之手／杂兵
 generals.csv	1162	将军卡片名／兴趣
-instance.csv	579	槽 0 英雄／行星／据点／王牌名（非 mes）
+instance.csv	603	槽 0 英雄／行星／据点／王牌／杀手锏名（非 mes）
 debug.csv	299	调试／测试
 other.csv	0	未归类
-合计	26211
+合计	26235
 

@@ -39,7 +39,7 @@ Default lookup: `python3 tools/catalog_query.py` (limit 40, cap 200).
 | `dungeon.csv` / `dungeon_other.csv` | 迷宫 |
 | `battle.csv` | 王牌／头目／杂兵 |
 | `generals.csv` | 将军名 `gen_zeus`，兴趣 `gen_zeus#hobby` |
-| `instance.csv` | 槽 0 英雄／行星名 `inst_hero_seva` / `inst_planet_sun` |
+| `instance.csv` | 槽 0 英雄／行星／据点／王牌／杀手锏 `inst_hero_seva` / `inst_planet_sun` / `inst_okunote_000` |
 
 `catalog_query.py search --sheet ch01_sun` accepts stem or filename.
 

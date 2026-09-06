@@ -103,5 +103,6 @@ LBA 580061 一带的 TIM2（256x128）
    - 蛋怪显示名／技能名不走 mes，在 VFS 槽 0 子文件 0（200×64，名+8，ASCII id +41）
      和子文件 1（每只蛋 5 个 48 字节技能槽，名+6）。译文仍用 catalog 的 `eg_cl_eggm` /
      `eg_cl_eggm_at1` 等。`patch_iso.py` 随槽 0 一起重编码。
+   - 杀手锏显示名不走 mes，在 VFS 槽 0 子文件 12（24×38，名+6，`inst_okunote_000`）。
 4. 系统英文（NODATA / DUALSHOCK2 / HOT / OK / DEFCON）不要沿用日文汉字槽的字形
 5. 秘密蛋合言葉保持日文原文，方便对照攻略

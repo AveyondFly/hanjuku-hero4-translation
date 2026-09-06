@@ -169,10 +169,12 @@ def encode_text(text: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
 # Must match zh_csv.SKIP_CMAP_CHARS / build_kiwi_font extras skip.
 SKIP_GLYPH = frozenset(" \t\n\r\u3000")
 
-# PrintMes C8 extra 13 opens the name plate, extra 189 closes it.
+# PrintMes C8 extras that open the name plate; extra 189 closes it.
+# Field/event mes uses 13; egg/battle mes uses 109 (often after color 203).
 # Orig 482/254 were empty glue; 277/314 were JP 「. All four ids are
 # real Chinese glyphs now (482=斗), so never copy or re-insert them.
 _SPEAKER_OPEN = 13
+_SPEAKER_OPENS = frozenset({13, 109, 203})
 _SPEAKER_CLOSE = 189
 _SKIP_AFTER_NAME = frozenset({482, 254, 277, 314})
 
@@ -234,33 +236,42 @@ def _pop_trailing_ctrls(toks: list) -> tuple[list, list]:
     return toks, suffix
 
 
+def _speaker_open_index(toks: list) -> int | None:
+    """Last C8 name-plate opener in the leading control run (before glyphs)."""
+    i_open = None
+    for i, t in enumerate(toks):
+        if not isinstance(t, tuple):
+            break
+        if t[0] == "C" and t[1] == 8 and t[2] in _SPEAKER_OPENS:
+            i_open = i
+    return i_open
+
+
 def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True) -> bytes:
     """Replace orig glyphs with zh; keep PrintMes controls, including name plates.
 
-    Dialogue strings are `C8:13` + name + `C8:189` + body. A previous merge
-    flattened that into one glyph run, so the first sentence sat in the name
-    bubble. Rebuild the closer. `名字：正文` fills the two sides; a C9 name
-    insert in the name slot is left alone (the injected speaker).
+    Dialogue strings are `C8:13|109` + name + `C8:189` + body. Egg/battle
+    lines open with 109 (after color 203); field lines use 13. A previous
+    merge that only looked for 13 flattened egg plates into one glyph run.
+    Rebuild the closer. `名字：正文` fills the two sides; a C9 name insert
+    in the name slot is left alone (the injected speaker).
     """
     toks = decode_font_codes(orig, mul48=False)
-    i13 = next(
-        (i for i, t in enumerate(toks) if _is_ctrl(t, 8, _SPEAKER_OPEN)),
-        None,
-    )
-    if i13 is None:
+    i_open = _speaker_open_index(toks)
+    if i_open is None:
         return encode_tokens(_merge_plain(toks, zh, cmap), mul48=mul48)
     i189 = next(
         (
             i
             for i, t in enumerate(toks)
-            if i > i13 and _is_ctrl(t, 8, _SPEAKER_CLOSE)
+            if i > i_open and _is_ctrl(t, 8, _SPEAKER_CLOSE)
         ),
         None,
     )
     if i189 is None:
-        merged = _merge_speaker_recovered(toks, i13, zh, cmap)
+        merged = _merge_speaker_recovered(toks, i_open, zh, cmap)
     else:
-        merged = _merge_speaker(toks, i13, i189, zh, cmap)
+        merged = _merge_speaker(toks, i_open, i189, zh, cmap)
     return encode_tokens(merged, mul48=mul48)
 
 

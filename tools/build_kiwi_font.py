@@ -5,6 +5,9 @@ Bank0 (0–191) is copied from the original RAM dump so kana / digits /
 合言葉 keep working. Bank1 (192+) is every remaining unique character
 in extracted/catalog/*.csv zh, rasterized at the native glyph size.
 
+UI icons that were dual-use kanji slots in Japanese (e.g. the save-slot
+play-time clock, catalog ⌚) copy the original 8bpp bitmap instead of Noto.
+
 Writes:
   extracted/zh_cmap.csv
   extracted/font/zh/kiwi_{w}x{h}.bin
@@ -36,6 +39,13 @@ NOTO_REG = Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
 # Original 16x16 main font / 12x12 small font in eeMemory.bin
 SRC_16 = (16, 16, 192, 1727, 4)
 SRC_12 = (12, 12, 192, 123, 4)
+
+# sysmes_term_b#26. Japanese mes code 345 is 眠 in the dialogue font and
+# a white/blue analog clock in the 8bpp UI font (glyph 70). 345 is 气 in
+# zh_cmap, so the clock is a new id behind this placeholder.
+CLOCK_CHAR = "\u231a"
+COLOR_ICON_KEY = (16, 16, 90, 0, 8)
+COLOR_CLOCK_GLYPH = 70
 
 
 def u16(buf: bytes, off: int) -> int:
@@ -192,12 +202,65 @@ def load_face(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(path), size, index=0)
 
 
+def find_color_icon_kiwi(ram: bytes) -> dict:
+    """8bpp UI icon font. Skip copies whose palette pointer is not in EE RAM."""
+    start = 0
+    w, h, n0, n1, bpp = COLOR_ICON_KEY
+    while True:
+        j = ram.find(b"KIWI", start)
+        if j < 0:
+            raise LookupError("8bpp icon KIWI not in RAM")
+        if j + 84 <= len(ram) and u32(ram, j + 4) == 17:
+            hdr = parse_header(ram, j)
+            pal, bmp0 = hdr["pal"], hdr["bmp0"]
+            if (
+                hdr["w"] == w
+                and hdr["h"] == h
+                and hdr["n0"] == n0
+                and hdr["n1"] == n1
+                and hdr["bpp_field"] == bpp
+                and 0x100000 < pal < 0x2000000
+                and 0x100000 < bmp0 < 0x2000000
+            ):
+                pal5 = ram[pal + 20 : pal + 24]
+                if pal5[2] > pal5[0] + 20:
+                    return hdr
+        start = j + 4
+
+
+def playtime_clock_luma(ram: bytes) -> Image.Image:
+    """16x16 grayscale of 8bpp glyph 70. Dark field and blue hands → 0."""
+    hdr = find_color_icon_kiwi(ram)
+    pal_off, bmp0 = hdr["pal"], hdr["bmp0"]
+    raw = ram[bmp0 + COLOR_CLOCK_GLYPH * 256 : bmp0 + (COLOR_CLOCK_GLYPH + 1) * 256]
+    img = Image.new("L", (16, 16), 0)
+    px = img.load()
+    k = 0
+    for y in range(16):
+        for x in range(16):
+            i = raw[k]
+            k += 1
+            r, g, b = ram[pal_off + i * 4], ram[pal_off + i * 4 + 1], ram[pal_off + i * 4 + 2]
+            lum = (r + g + b) // 3
+            if lum < 90 or b > r + 20:
+                n = 0
+            else:
+                n = max(1, min(15, lum * 15 // 255))
+            px[x, y] = n * 17
+    return img
+
+
+def icon_overrides(ram: bytes) -> dict[str, Image.Image]:
+    return {CLOCK_CHAR: playtime_clock_luma(ram)}
+
+
 def write_kiwi(
     ram: bytes,
     src_key: tuple[int, int, int, int, int],
     cmap: dict[str, int],
     font: ImageFont.FreeTypeFont,
     dest: Path,
+    icons: dict[str, Image.Image] | None = None,
 ) -> dict:
     hdr = find_kiwi(ram, src_key)
     loc = hdr["loc"]
@@ -223,7 +286,13 @@ def write_kiwi(
         if not ch:
             met1[i * 2 : i * 2 + 2] = bytes((0, 6))
             continue
-        img = render_char(font, ch, w, h)
+        if icons and ch in icons:
+            src = icons[ch]
+            img = src if src.size == (w, h) else src.resize((w, h), Image.NEAREST)
+            if img.mode != "L":
+                img = img.convert("L")
+        else:
+            img = render_char(font, ch, w, h)
         g = encode_glyph(img, w, h)
         bmp1[i * bpg : i * bpg + bpg] = g
         a, b = metrics_of(img)
@@ -311,11 +380,13 @@ def main() -> None:
 
     font16 = load_face(13)
     font12 = load_face(10)
+    icons = icon_overrides(ram)
+    print("icon overrides", " ".join(f"{ch}=U+{ord(ch):04X}" for ch in icons))
     OUT.mkdir(parents=True, exist_ok=True)
 
-    info16 = write_kiwi(ram, SRC_16, cmap, font16, OUT / "kiwi_16x16.bin")
+    info16 = write_kiwi(ram, SRC_16, cmap, font16, OUT / "kiwi_16x16.bin", icons=icons)
     print(f"16x16 n0={info16['n0']} n1={info16['n1']} {info16['bytes']} bytes")
-    info12 = write_kiwi(ram, SRC_12, cmap, font12, OUT / "kiwi_12x12.bin")
+    info12 = write_kiwi(ram, SRC_12, cmap, font12, OUT / "kiwi_12x12.bin", icons=icons)
     print(f"12x12 n0={info12['n0']} n1={info12['n1']} {info12['bytes']} bytes")
 
     atlas((OUT / "kiwi_16x16.bin").read_bytes(), cmap, OUT / "atlas_sample.png")

@@ -850,7 +850,7 @@ sysmes_term_b#22,,,ram_1005_sysmes,empty
 sysmes_term_b#23,今,现,ram_1005_sysmes,copy
 sysmes_term_b#24,きりふだ,王牌,ram_1005_sysmes,copy
 sysmes_term_b#25,定使,设定,ram_1005_sysmes,copy
-sysmes_term_b#26,眠,眠,ram_1005_sysmes,copy
+sysmes_term_b#26,眠,⌚,ram_1005_sysmes 读取页时长图标（8bpp 字形70），不是汉字眠,copy
 sysmes_term_b#27,時,时,ram_1005_sysmes,copy
 sysmes_term_b#28,変,：,ram_1005_sysmes,copy
 sysmes_term_b#29,持,持,ram_1005_sysmes,copy

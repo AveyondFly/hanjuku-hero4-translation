@@ -171,12 +171,18 @@ SKIP_GLYPH = frozenset(" \t\n\r\u3000")
 
 # PrintMes C8 extras that open the name plate; extra 189 closes it.
 # Field/event mes uses 13; egg/battle mes uses 109 (often after color 203).
+# 203 is a color, not an opener — treating it as one injected a fake 189
+# and dropped mid-string C9 name inserts (empty 「」 on rank-up telops).
 # Orig 482/254 were empty glue; 277/314 were JP 「. All four ids are
 # real Chinese glyphs now (482=斗), so never copy or re-insert them.
 _SPEAKER_OPEN = 13
-_SPEAKER_OPENS = frozenset({13, 109, 203})
+_SPEAKER_OPENS = frozenset({13, 109})
 _SPEAKER_CLOSE = 189
 _SKIP_AFTER_NAME = frozenset({482, 254, 277, 314})
+_QUOTE_PAIRS = (("「", "」"), ("『", "』"), ("（", "）"))
+# C9 extras to synthesize when the ISO orig already lost the insert.
+# 158 = unit/egg/item name; 129 = number (rank, count, pokkiri).
+_C9_FILL = (158, 129)
 
 
 class MissingGlyphs(ValueError):
@@ -194,6 +200,102 @@ def _is_ctrl(tok, kind: int, extra=None) -> bool:
         and tok[1] == kind
         and (extra is None or tok[2] == extra)
     )
+
+
+def _is_c9(tok) -> bool:
+    return isinstance(tok, tuple) and tok[0] == "C" and tok[1] == 9
+
+
+def _quote_id_pairs(cmap: dict[str, int]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for a, b in _QUOTE_PAIRS:
+        ga, gb = cmap.get(a), cmap.get(b)
+        if ga is not None and gb is not None:
+            out.append((ga, gb))
+    return out
+
+
+def _has_empty_quotes(toks: list, cmap: dict[str, int]) -> bool:
+    pairs = _quote_id_pairs(cmap)
+    if not pairs:
+        return False
+    for t, nxt in zip(toks, toks[1:]):
+        if isinstance(t, int) and isinstance(nxt, int) and (t, nxt) in pairs:
+            return True
+    return False
+
+
+def _drop_orphan_speaker_close(prefix: list) -> list:
+    """C8:189 with no real opener is leftover from treating color 203 as a plate."""
+    if any(_is_ctrl(t, 8, extra) for t in prefix for extra in _SPEAKER_OPENS):
+        return prefix
+    return [t for t in prefix if not _is_ctrl(t, 8, _SPEAKER_CLOSE)]
+
+
+def _leading_ctrls(toks: list) -> list:
+    out: list = []
+    for t in toks:
+        if isinstance(t, tuple) and not _is_c9(t):
+            out.append(t)
+            continue
+        break
+    return out
+
+
+def _needs_c9_fill(toks: list, cmap: dict[str, int]) -> bool:
+    """Synthesize C9:158 only for telops that already lost the insert.
+
+    That is: empty 「」 plus a fake C8:189 after color 203 (no real 13/109).
+    Other empty quotes still harvest a trailing C9 if it survived on disc.
+    """
+    if not _has_empty_quotes(toks, cmap):
+        return False
+    leading = _leading_ctrls(toks)
+    has_open = any(_is_ctrl(t, 8, extra) for t in leading for extra in _SPEAKER_OPENS)
+    has_189 = any(_is_ctrl(t, 8, _SPEAKER_CLOSE) for t in leading)
+    return has_189 and not has_open
+
+
+def _place_c9(
+    toks: list,
+    c9s: list,
+    cmap: dict[str, int],
+    *,
+    fill_missing: bool,
+) -> tuple[list, list]:
+    """Put harvested C9 inserts between adjacent 「」 / （） in zh tokens.
+
+    Leftover C9s are returned for the caller to keep as prefix/suffix.
+    When orig already lost the insert (`fill_missing`), empty quotes get
+    C9:158 then C9:129 (name, then number).
+    """
+    pairs = set(_quote_id_pairs(cmap))
+    pending = list(c9s)
+    fill_i = 0
+    out: list = []
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        nxt = toks[i + 1] if i + 1 < len(toks) else None
+        if (
+            nxt is not None
+            and isinstance(t, int)
+            and isinstance(nxt, int)
+            and (t, nxt) in pairs
+        ):
+            out.append(t)
+            if pending:
+                out.append(pending.pop(0))
+            elif fill_missing:
+                extra = _C9_FILL[min(fill_i, len(_C9_FILL) - 1)]
+                out.append(("C", 9, extra))
+                fill_i += 1
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(t)
+        i += 1
+    return out, pending
 
 
 def _zh_tokens(zh: str, cmap: dict[str, int]) -> list:
@@ -255,6 +357,9 @@ def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True
     merge that only looked for 13 flattened egg plates into one glyph run.
     Rebuild the closer. `名字：正文` fills the two sides; a C9 name insert
     in the name slot is left alone (the injected speaker).
+
+    Catalog `「」` is a C9 placeholder. Harvest C9s that a previous merge
+    shoved after the sentence and put them back between the quotes.
     """
     toks = decode_font_codes(orig, mul48=False)
     i_open = _speaker_open_index(toks)
@@ -275,19 +380,69 @@ def encode_merged(orig: bytes, zh: str, cmap: dict[str, int], mul48: bool = True
     return encode_tokens(merged, mul48=mul48)
 
 
+def _inject_rank_number(toks: list, cmap: dict[str, int]) -> list:
+    """JP rank-up was `、にアップ`; put C9:129 after 到了 if still missing."""
+    if any(_is_c9(t) and t[2] == 129 for t in toks):
+        return toks
+    placed, leftover = _place_c9_after_dao_le(toks, [("C", 9, 129)], cmap)
+    return placed if not leftover else toks
+
+
+def _place_c9_after_dao_le(
+    toks: list, c9s: list, cmap: dict[str, int]
+) -> tuple[list, list]:
+    dao, le = cmap.get("到"), cmap.get("了")
+    pending = list(c9s)
+    if dao is None or le is None or not pending:
+        return toks, pending
+    out: list = []
+    for i, t in enumerate(toks):
+        out.append(t)
+        if t == le and i > 0 and toks[i - 1] == dao:
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            if _is_c9(nxt):
+                continue
+            out.append(pending.pop(0))
+            if not pending:
+                out.extend(toks[i + 1 :])
+                return out, pending
+    return out, pending
+
+
 def _merge_plain(toks: list, zh: str, cmap: dict[str, int]) -> list:
     prefix: list = []
     suffix: list = []
+    c9_prefix: list = []
+    c9_suffix: list = []
     seen_glyph = False
     for t in toks:
+        if _is_c9(t):
+            (c9_prefix if not seen_glyph else c9_suffix).append(t)
+            continue
         if isinstance(t, tuple):
-            if not seen_glyph:
-                prefix.append(t)
-            else:
-                suffix.append(t)
+            (prefix if not seen_glyph else suffix).append(t)
         else:
             seen_glyph = True
-    return list(prefix) + _zh_tokens(zh, cmap) + list(suffix)
+    prefix = _drop_orphan_speaker_close(prefix)
+    fill = _needs_c9_fill(toks, cmap)
+    body = _zh_tokens(zh, cmap)
+    body, c9_suffix = _place_c9(body, c9_suffix, cmap, fill_missing=False)
+    if _has_empty_quotes(body, cmap):
+        body, c9_prefix = _place_c9(body, c9_prefix, cmap, fill_missing=False)
+    if fill and _has_empty_quotes(body, cmap):
+        body, _empty = _place_c9(body, [], cmap, fill_missing=True)
+    if c9_suffix:
+        body, c9_suffix = _place_c9_after_dao_le(body, c9_suffix, cmap)
+    if fill:
+        body = _inject_rank_number(body, cmap)
+    return list(prefix) + c9_prefix + body + c9_suffix + list(suffix)
+
+
+def _body_c9(rest: list, suffix: list) -> tuple[list, list]:
+    """Pull C9s out of the discarded orig body so they can fill zh 「」."""
+    c9s = [t for t in rest if _is_c9(t)] + [t for t in suffix if _is_c9(t)]
+    suffix = [t for t in suffix if not _is_c9(t)]
+    return c9s, suffix
 
 
 def _merge_speaker(toks: list, i13: int, i189: int, zh: str, cmap: dict[str, int]) -> list:
@@ -302,6 +457,9 @@ def _merge_speaker(toks: list, i13: int, i189: int, zh: str, cmap: dict[str, int
         t = rest.pop(0)
         if isinstance(t, int):
             continue
+        if _is_c9(t):
+            rest.insert(0, t)
+            break
         bridge.append(t)
     name_has_ctrl = any(isinstance(t, tuple) for t in orig_name)
     split = _split_speaker_zh(zh)
@@ -314,12 +472,20 @@ def _merge_speaker(toks: list, i13: int, i189: int, zh: str, cmap: dict[str, int
     else:
         name_toks = list(orig_name)
         body_toks = _zh_tokens(zh, cmap)
+    c9s, suffix = _body_c9(rest, suffix)
+    fill = _needs_c9_fill(toks, cmap)
+    body_toks, leftover = _place_c9(body_toks, c9s, cmap, fill_missing=False)
+    if fill and _has_empty_quotes(body_toks, cmap):
+        body_toks, leftover = _place_c9(
+            body_toks, leftover, cmap, fill_missing=True
+        )
     return (
         list(head)
         + name_toks
         + [("C", 8, _SPEAKER_CLOSE)]
         + bridge
         + body_toks
+        + leftover
         + suffix
     )
 
@@ -336,11 +502,19 @@ def _merge_speaker_recovered(toks: list, i13: int, zh: str, cmap: dict[str, int]
     else:
         name_toks = []
         body_toks = _zh_tokens(zh, cmap)
+    c9s, suffix = _body_c9(rest, suffix)
+    fill = _needs_c9_fill(toks, cmap)
+    body_toks, leftover = _place_c9(body_toks, c9s, cmap, fill_missing=False)
+    if fill and _has_empty_quotes(body_toks, cmap):
+        body_toks, leftover = _place_c9(
+            body_toks, leftover, cmap, fill_missing=True
+        )
     return (
         list(head)
         + name_toks
         + [("C", 8, _SPEAKER_CLOSE)]
         + body_toks
+        + leftover
         + suffix
     )
 
